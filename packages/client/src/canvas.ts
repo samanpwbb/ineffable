@@ -51,7 +51,7 @@ export class CanvasRenderer {
     };
   }
 
-  render(selection: Rect | null, showHandles = false): void {
+  render(selection: Rect | null, showHandles = false, lineDirection?: "horizontal" | "vertical"): void {
     const g = this.grid;
     const w = g.width * CELL_WIDTH;
     const h = g.height * CELL_HEIGHT;
@@ -104,25 +104,20 @@ export class CanvasRenderer {
       this.ctx.strokeRect(sx, sy, sw, sh);
       this.ctx.setLineDash([]);
 
-      // Drag handles at corners
+      // Drag handles
       if (showHandles) {
         this.ctx.fillStyle = SELECTION_BORDER_COLOR;
         const half = Math.floor(HANDLE_SIZE / 2);
-        const corners = [
-          [sx, sy],                 // nw
-          [sx + sw, sy],            // ne
-          [sx, sy + sh],            // sw
-          [sx + sw, sy + sh],       // se
-        ];
-        for (const [cx, cy] of corners) {
-          this.ctx.fillRect(cx - half, cy - half, HANDLE_SIZE, HANDLE_SIZE);
+        const handles = getHandlePositions(sx, sy, sw, sh, lineDirection);
+        for (const [hx, hy] of handles) {
+          this.ctx.fillRect(hx - half, hy - half, HANDLE_SIZE, HANDLE_SIZE);
         }
       }
     }
   }
 
-  /** Returns which corner handle the pixel coordinate is over, or null. */
-  getHandleAt(px: number, py: number, selection: Rect): HandleCorner | null {
+  /** Returns which handle the pixel coordinate is over, or null. */
+  getHandleAt(px: number, py: number, selection: Rect, lineDirection?: "horizontal" | "vertical"): HandleCorner | null {
     const rect = this.canvas.getBoundingClientRect();
     const x = px - rect.left;
     const y = py - rect.top;
@@ -132,15 +127,9 @@ export class CanvasRenderer {
     const sw = selection.width * CELL_WIDTH;
     const sh = selection.height * CELL_HEIGHT;
 
-    const corners: [number, number, HandleCorner][] = [
-      [sx, sy, "nw"],
-      [sx + sw, sy, "ne"],
-      [sx, sy + sh, "sw"],
-      [sx + sw, sy + sh, "se"],
-    ];
-
-    for (const [cx, cy, corner] of corners) {
-      if (Math.abs(x - cx) <= HANDLE_HIT_RADIUS && Math.abs(y - cy) <= HANDLE_HIT_RADIUS) {
+    const handles = getHandlePositions(sx, sy, sw, sh, lineDirection);
+    for (const [hx, hy, corner] of handles) {
+      if (Math.abs(x - hx) <= HANDLE_HIT_RADIUS && Math.abs(y - hy) <= HANDLE_HIT_RADIUS) {
         return corner;
       }
     }
@@ -150,4 +139,34 @@ export class CanvasRenderer {
   setGrid(grid: Grid): void {
     this.grid = grid;
   }
+}
+
+/** Compute handle positions. For lines, only return 2 endpoint handles. */
+function getHandlePositions(
+  sx: number, sy: number, sw: number, sh: number,
+  lineDirection?: "horizontal" | "vertical"
+): [number, number, HandleCorner][] {
+  if (lineDirection === "horizontal") {
+    // Left and right endpoints, vertically centered
+    const midY = sy + sh / 2;
+    return [
+      [sx, midY, "nw"],
+      [sx + sw, midY, "ne"],
+    ];
+  }
+  if (lineDirection === "vertical") {
+    // Top and bottom endpoints, horizontally centered
+    const midX = sx + sw / 2;
+    return [
+      [midX, sy, "nw"],
+      [midX, sy + sh, "sw"],
+    ];
+  }
+  // Box: 4 corners
+  return [
+    [sx, sy, "nw"],
+    [sx + sw, sy, "ne"],
+    [sx, sy + sh, "sw"],
+    [sx + sw, sy + sh, "se"],
+  ];
 }

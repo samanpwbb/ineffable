@@ -78,8 +78,13 @@ export class Editor {
     return t === "box" || t === "line";
   }
 
+  private get selectedLineDirection(): "horizontal" | "vertical" | undefined {
+    const w = this.selectedWidget;
+    return w?.type === "line" ? w.direction : undefined;
+  }
+
   redraw(): void {
-    this.renderer.render(this.selection, this.isResizable);
+    this.renderer.render(this.selection, this.isResizable, this.selectedLineDirection);
   }
 
   updateStatus(col: number, row: number): void {
@@ -103,7 +108,7 @@ export class Editor {
     if (this.tool === "select") {
       // Check if clicking on a resize handle
       if (this.selection && this.selectedWidget && this.isResizable) {
-        const handle = this.renderer.getHandleAt(px, py, this.selection);
+        const handle = this.renderer.getHandleAt(px, py, this.selection, this.selectedLineDirection);
         if (handle) {
           this.isResizing = true;
           this.resizeHandle = handle;
@@ -448,8 +453,10 @@ export class Editor {
   getCursor(px: number, py: number): string {
     if (this.tool !== "select") return "crosshair";
     if (this.selection && this.selectedWidget && this.isResizable) {
-      const handle = this.renderer.getHandleAt(px, py, this.selection);
+      const handle = this.renderer.getHandleAt(px, py, this.selection, this.selectedLineDirection);
       if (handle) {
+        if (this.selectedLineDirection === "horizontal") return "ew-resize";
+        if (this.selectedLineDirection === "vertical") return "ns-resize";
         const cursors: Record<string, string> = {
           nw: "nwse-resize",
           se: "nwse-resize",
