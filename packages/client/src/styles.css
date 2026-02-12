@@ -1,0 +1,222 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #000;
+  color: #999;
+  font-family: 'Space Mono', monospace;
+  font-size: 13px;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  height: 100vh;
+}
+
+/* ---- Canvas ---- */
+
+.canvas-container {
+  width: 100%;
+  height: 100%;
+  padding: 20px;
+  position: relative;
+}
+
+canvas {
+  background: #000;
+  cursor: crosshair;
+}
+
+/* ---- Overlay (top-right) ---- */
+
+.overlay {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+
+/* ---- Select ---- */
+
+.select-trigger {
+  font-family: 'Space Mono', monospace;
+  font-size: 13px;
+  background: #111;
+  color: #999;
+  border: 1px solid #333;
+  padding: 6px 12px;
+  cursor: pointer;
+  min-width: 180px;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.select-trigger:hover {
+  border-color: #555;
+}
+
+.select-positioner {
+  z-index: 100;
+}
+
+.select-popup {
+  font-family: 'Space Mono', monospace;
+  font-size: 13px;
+  background: #111;
+  border: 1px solid #333;
+  min-width: 180px;
+}
+
+.select-item {
+  padding: 6px 12px;
+  cursor: pointer;
+  color: #999;
+}
+
+.select-item:hover,
+.select-item[data-highlighted] {
+  background: #222;
+  color: #ccc;
+}
+
+.select-item[data-selected] {
+  color: #fff;
+}
+
+/* ---- Toolbar (vertical) ---- */
+
+.toolbar [role="group"] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: #111;
+  border: 1px solid #333;
+  padding: 4px;
+}
+
+.toolbar-btn {
+  font-family: 'Space Mono', monospace;
+  font-size: 12px;
+  background: none;
+  color: #666;
+  border: none;
+  padding: 6px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolbar-btn:hover {
+  color: #999;
+  background: #1a1a1a;
+}
+
+.toolbar-btn[aria-pressed="true"],
+.toolbar-btn[data-pressed] {
+  color: #fff;
+  background: #222;
+}
+
+.toolbar-btn-shortcut {
+  font-size: 10px;
+  color: #444;
+}
+
+.toolbar-btn[aria-pressed="true"] .toolbar-btn-shortcut,
+.toolbar-btn[data-pressed] .toolbar-btn-shortcut {
+  color: #666;
+}
+
+/* ---- Button ---- */
+
+.btn {
+  font-family: 'Space Mono', monospace;
+  font-size: 12px;
+  background: #111;
+  color: #666;
+  border: 1px solid #333;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  color: #999;
+  border-color: #555;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ---- Status bar (bottom-right) ---- */
+
+.status-bar {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  z-index: 10;
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  color: #444;
+}
+
+/* ---- AI indicator (bottom-left) ---- */
+
+.ai-indicator {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #666;
+}
+
+.ai-indicator--working .ai-indicator-label {
+  color: #999;
+}
+
+.ai-indicator--working .ai-indicator-label::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: #999;
+  border-radius: 50%;
+  margin-right: 6px;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.ai-indicator--done .ai-indicator-label {
+  color: #666;
+}
+
+.ai-indicator--error .ai-indicator-label {
+  color: #a44;
+}
+
+.ai-indicator-instruction {
+  color: #444;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}

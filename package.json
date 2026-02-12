@@ -1,0 +1,10 @@
+{
+  "name": "ineffable",
+  "private": true,
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm -r --parallel dev",
+    "dev:server": "pnpm --filter @ineffable/server dev",
+    "dev:client": "pnpm --filter @ineffable/client dev"
+  }
+}
