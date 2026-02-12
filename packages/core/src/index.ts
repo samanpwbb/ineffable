@@ -6,13 +6,11 @@ export {
   type Widget,
   type BoxWidget,
   type ButtonWidget,
-  type ToggleWidget,
   type TextWidget,
   type LineWidget,
   type Rect,
   BOX_CHARS,
   BUTTON_CHARS,
-  TOGGLE_CHARS,
   LINE_CHARS,
   BOX_CORNERS,
 } from "./patterns.js";

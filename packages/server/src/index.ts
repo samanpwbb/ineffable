@@ -142,48 +142,66 @@ function checkForAiDirectives(filename: string, content: string): void {
     });
 }
 
+const SYSTEM_PROMPT = [
+  "You are a text-processing tool that transforms ASCII diagrams.",
+  "You receive a diagram and output a modified version.",
+  "Your ENTIRE stdout will be written directly to a file.",
+  "Output ONLY the diagram content. No prose, no explanations, no questions,",
+  "no markdown fences, no commentary. Never ask for permission.",
+].join(" ");
+
+const LOOKS_LIKE_CHAT = /^(I |I'm |I need |I can|I've |It seems|Sure|Here|The |This |Let me|Unfortunately|I apologize|Could you|Please |Would you|Note:)/m;
+
 function runClaude(filename: string, instruction: string): Promise<void> {
+  const filePath = path.join(DIAGRAMS_DIR, filename);
+  const patterns = fs.readFileSync(PATTERNS_PATH, "utf-8");
+  const diagramContent = fs.readFileSync(filePath, "utf-8");
+
+  const isRepair = /^repair$/i.test(instruction);
+
+  const taskDescription = isRepair
+    ? [
+        "REPAIR this diagram.",
+        "Look for broken or incomplete widget patterns — missing box corners, unclosed edges,",
+        "misaligned borders, partially erased widgets — and fix them.",
+        "Do not add new widgets or change the layout. Only repair damaged patterns.",
+      ].join("\n")
+    : [
+        "The user has left this instruction in the file:",
+        `"${instruction}"`,
+        "\nEdit the diagram to fulfill the instruction.",
+      ].join("\n");
+
+  const prompt = [
+    "Widget pattern definitions:\n",
+    patterns,
+    "\nCurrent file content:\n",
+    diagramContent,
+    "\nTask: " + taskDescription,
+    "\nRules:",
+    "- Remove any line starting with '# @ai'",
+    "- Keep other comment lines (like '# see PATTERNS.md for widget syntax')",
+    "- Output the complete file contents and NOTHING else",
+  ].join("\n");
+
+  return attemptClaude(filename, filePath, prompt, 0);
+}
+
+function attemptClaude(filename: string, filePath: string, prompt: string, attempt: number): Promise<void> {
+  const MAX_ATTEMPTS = 2;
+
   return new Promise((resolve, reject) => {
-    const filePath = path.join(DIAGRAMS_DIR, filename);
-    const patterns = fs.readFileSync(PATTERNS_PATH, "utf-8");
-    const diagramContent = fs.readFileSync(filePath, "utf-8");
+    const finalPrompt = attempt > 0
+      ? prompt + "\n\nPREVIOUS ATTEMPT FAILED. Output ONLY the raw diagram text. No explanation."
+      : prompt;
 
-    const isRepair = /^repair$/i.test(instruction);
+    console.log(`[ai] Spawning claude for ${filename} (attempt ${attempt + 1}/${MAX_ATTEMPTS}, prompt length: ${finalPrompt.length} chars)`);
 
-    const taskDescription = isRepair
-      ? [
-          "The user wants you to REPAIR this diagram.",
-          "Look for broken or incomplete widget patterns — missing box corners, unclosed edges,",
-          "misaligned borders, partially erased widgets — and fix them.",
-          "Do not add new widgets or change the layout. Only repair damaged patterns.",
-        ].join("\n")
-      : [
-          "The user has left this instruction in the file:",
-          `"${instruction}"`,
-          "\nEdit the diagram to fulfill the instruction.",
-        ].join("\n");
-
-    const prompt = [
-      "You are a text-processing tool. You receive an ASCII diagram and output a modified version.",
-      "You are NOT an assistant. Do NOT write explanations, questions, or commentary.",
-      "Do NOT ask for permission. Do NOT use markdown fences.",
-      "Your ENTIRE output will be written directly to a file, so it must contain ONLY the diagram.\n",
-      "Widget pattern definitions:\n",
-      patterns,
-      "\nCurrent file content:\n",
-      diagramContent,
-      "\nTask: " + taskDescription,
-      "\nRules:",
-      "- Remove any line starting with '# @ai'",
-      "- Keep other comment lines (like '# see PATTERNS.md for widget syntax')",
-      "- Output the complete file contents and NOTHING else",
-      "- Do NOT wrap output in ``` code fences",
-      "- Do NOT include any prose, explanation, or conversational text",
-    ].join("\n");
-
-    console.log(`[ai] Spawning claude for ${filename} (prompt length: ${prompt.length} chars)`);
-
-    const child = spawn("claude", ["-p", prompt], {
+    const child = spawn("claude", [
+      "-p", finalPrompt,
+      "--system-prompt", SYSTEM_PROMPT,
+      "--tools", "",
+    ], {
       cwd: REPO_ROOT,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env },
@@ -203,6 +221,11 @@ function runClaude(filename: string, instruction: string): Promise<void> {
     child.on("close", (code) => {
       console.log(`[ai] claude exited with code ${code}, stdout length: ${stdout.length}`);
       if (code !== 0) {
+        if (attempt < MAX_ATTEMPTS - 1) {
+          console.log(`[ai] Non-zero exit, retrying...`);
+          resolve(attemptClaude(filename, filePath, prompt, attempt + 1));
+          return;
+        }
         reject(new Error(`claude exited with code ${code}: ${stderr}`));
         return;
       }
@@ -215,10 +238,15 @@ function runClaude(filename: string, instruction: string): Promise<void> {
       // Validate: output should contain box-drawing chars or comment lines,
       // not look like a conversational response
       const hasBoxChars = /[┌┐└┘─│\[\]]/.test(result);
-      const looksLikeChat = /^(I |I'm |I need |I can|Sure|Here|The |This |Let me|Unfortunately|I apologize)/m.test(result);
+      const looksLikeChat = LOOKS_LIKE_CHAT.test(result);
       if (!hasBoxChars || looksLikeChat) {
         console.error(`[ai] Output rejected — looks like conversational text, not a diagram`);
         console.error(`[ai] First 200 chars: ${result.slice(0, 200)}`);
+        if (attempt < MAX_ATTEMPTS - 1) {
+          console.log(`[ai] Retrying...`);
+          resolve(attemptClaude(filename, filePath, prompt, attempt + 1));
+          return;
+        }
         reject(new Error("Claude output conversational text instead of diagram content"));
         return;
       }

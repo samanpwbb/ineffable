@@ -1,6 +1,6 @@
 /**
  * Pattern-matching parser: detects widgets from a Grid.
- * Priority order: box, button, toggle, line, text.
+ * Priority order: box, button, line, text.
  */
 
 import { Grid } from "./grid.js";
@@ -9,7 +9,6 @@ import {
   BOX_CHARS,
   BOX_CORNERS,
   BUTTON_CHARS,
-  TOGGLE_CHARS,
   LINE_CHARS,
   Rect,
 } from "./patterns.js";
@@ -42,12 +41,6 @@ export function detectWidgets(grid: Grid): Widget[] {
       if (grid.get(c, r) !== "[") continue;
       if (grid.get(c + 1, r) !== " ") continue;
 
-      // Check this isn't a toggle (toggle has [x] or [ ] followed by space + label)
-      const toggleCheck = grid.get(c + 1, r) + grid.get(c + 2, r) + grid.get(c + 3, r);
-      if (toggleCheck === "x] " || toggleCheck === " ] ") {
-        continue; // skip, will be caught by toggle detection
-      }
-
       const btn = traceButton(grid, c, r);
       if (btn) {
         widgets.push(btn);
@@ -56,21 +49,7 @@ export function detectWidgets(grid: Grid): Widget[] {
     }
   }
 
-  // 3. Detect toggles
-  for (let r = 0; r < grid.height; r++) {
-    for (let c = 0; c < grid.width; c++) {
-      if (claimed.has(key(c, r))) continue;
-      if (grid.get(c, r) !== "[") continue;
-
-      const toggle = traceToggle(grid, c, r);
-      if (toggle) {
-        widgets.push(toggle);
-        claimRect(claimed, toggle.rect, key);
-      }
-    }
-  }
-
-  // 4. Detect lines
+  // 3. Detect lines
   for (let r = 0; r < grid.height; r++) {
     for (let c = 0; c < grid.width; c++) {
       if (claimed.has(key(c, r))) continue;
@@ -231,59 +210,6 @@ function traceButton(grid: Grid, startCol: number, startRow: number): Widget | n
     c++;
   }
   return null;
-}
-
-function traceToggle(grid: Grid, startCol: number, startRow: number): Widget | null {
-  const c1 = grid.get(startCol + 1, startRow);
-  const c2 = grid.get(startCol + 2, startRow);
-  const c3 = grid.get(startCol + 3, startRow);
-
-  let on: boolean;
-  if (c1 === "x" && c2 === "]" && c3 === " ") {
-    on = true;
-  } else if (c1 === " " && c2 === "]" && c3 === " ") {
-    on = false;
-  } else {
-    return null;
-  }
-
-  // Read label (rest of non-space text on the line)
-  let label = "";
-  let c = startCol + 4;
-  while (c < grid.width && grid.get(c, startRow) !== " ") {
-    label += grid.get(c, startRow);
-    c++;
-  }
-  // Include spaces within the label (but not trailing)
-  while (c < grid.width) {
-    const nextNonSpace = findNextNonSpace(grid, c, startRow);
-    if (nextNonSpace === -1) break;
-    // Add the space(s) and next word
-    for (let i = c; i <= nextNonSpace; i++) {
-      label += grid.get(i, startRow);
-    }
-    c = nextNonSpace + 1;
-    while (c < grid.width && grid.get(c, startRow) !== " ") {
-      label += grid.get(c, startRow);
-      c++;
-    }
-  }
-
-  if (label.length === 0) return null;
-  const width = 4 + label.length;
-  return {
-    type: "toggle",
-    label,
-    on,
-    rect: { col: startCol, row: startRow, width, height: 1 },
-  };
-}
-
-function findNextNonSpace(grid: Grid, startCol: number, row: number): number {
-  for (let c = startCol; c < grid.width; c++) {
-    if (grid.get(c, row) !== " ") return c;
-  }
-  return -1;
 }
 
 function traceHorizontalLine(

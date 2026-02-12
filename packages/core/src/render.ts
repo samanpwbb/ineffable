@@ -5,7 +5,7 @@
  */
 
 import { Grid } from "./grid.js";
-import { Widget, BOX_CHARS, BUTTON_CHARS, TOGGLE_CHARS, LINE_CHARS } from "./patterns.js";
+import { Widget, BOX_CHARS, BUTTON_CHARS, LINE_CHARS } from "./patterns.js";
 
 /** Render a single widget onto the grid. */
 export function renderWidget(grid: Grid, widget: Widget): void {
@@ -15,9 +15,6 @@ export function renderWidget(grid: Grid, widget: Widget): void {
       break;
     case "button":
       renderButton(grid, widget.rect.col, widget.rect.row, widget.label);
-      break;
-    case "toggle":
-      renderToggle(grid, widget.rect.col, widget.rect.row, widget.label, widget.on);
       break;
     case "text":
       grid.writeString(widget.rect.col, widget.rect.row, widget.content);
@@ -50,11 +47,6 @@ function renderBox(grid: Grid, col: number, row: number, width: number, height: 
 
 function renderButton(grid: Grid, col: number, row: number, label: string): void {
   grid.writeString(col, row, BUTTON_CHARS.open + label + BUTTON_CHARS.close);
-}
-
-function renderToggle(grid: Grid, col: number, row: number, label: string, on: boolean): void {
-  const prefix = on ? TOGGLE_CHARS.on : TOGGLE_CHARS.off;
-  grid.writeString(col, row, prefix + label);
 }
 
 function renderLine(grid: Grid, col: number, row: number, direction: "horizontal" | "vertical", length: number): void {

@@ -4,7 +4,7 @@
  * for both rendering and detection.
  */
 
-export type WidgetType = "box" | "button" | "toggle" | "text" | "line";
+export type WidgetType = "box" | "button" | "text" | "line";
 
 export const BOX_CHARS = {
   topLeft: "┌",
@@ -18,11 +18,6 @@ export const BOX_CHARS = {
 export const BUTTON_CHARS = {
   open: "[ ",
   close: " ]",
-} as const;
-
-export const TOGGLE_CHARS = {
-  on: "[x] ",
-  off: "[ ] ",
 } as const;
 
 export const LINE_CHARS = {
@@ -56,13 +51,6 @@ export interface ButtonWidget {
   rect: Rect;
 }
 
-export interface ToggleWidget {
-  type: "toggle";
-  label: string;
-  on: boolean;
-  rect: Rect;
-}
-
 export interface TextWidget {
   type: "text";
   content: string;
@@ -75,4 +63,4 @@ export interface LineWidget {
   rect: Rect;
 }
 
-export type Widget = BoxWidget | ButtonWidget | ToggleWidget | TextWidget | LineWidget;
+export type Widget = BoxWidget | ButtonWidget | TextWidget | LineWidget;

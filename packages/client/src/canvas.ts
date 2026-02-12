@@ -5,6 +5,8 @@
 
 import { Grid, Rect } from "@ineffable/core";
 
+export type HandleCorner = "nw" | "ne" | "sw" | "se";
+
 const CELL_WIDTH = 10;
 const CELL_HEIGHT = 18;
 const FONT_SIZE = 14;
@@ -12,8 +14,9 @@ const FONT_FAMILY = "'Space Mono', monospace";
 const TEXT_COLOR = "#fff";
 const BG_COLOR = "#000";
 const GRID_LINE_COLOR = "#111";
-const SELECTION_COLOR = "rgba(255, 255, 255, 0.06)";
-const SELECTION_BORDER_COLOR = "#555";
+const SELECTION_BORDER_COLOR = "#f5c542";
+const HANDLE_SIZE = 5; // px, each side of the square
+const HANDLE_HIT_RADIUS = 6; // px, hit detection radius
 
 export class CanvasRenderer {
   private ctx: CanvasRenderingContext2D;
@@ -48,7 +51,7 @@ export class CanvasRenderer {
     };
   }
 
-  render(selection: Rect | null): void {
+  render(selection: Rect | null, showHandles = false): void {
     const g = this.grid;
     const w = g.width * CELL_WIDTH;
     const h = g.height * CELL_HEIGHT;
@@ -90,22 +93,58 @@ export class CanvasRenderer {
 
     // Selection highlight
     if (selection) {
-      this.ctx.fillStyle = SELECTION_COLOR;
-      this.ctx.fillRect(
-        selection.col * CELL_WIDTH,
-        selection.row * CELL_HEIGHT,
-        selection.width * CELL_WIDTH,
-        selection.height * CELL_HEIGHT
-      );
+      const sx = selection.col * CELL_WIDTH;
+      const sy = selection.row * CELL_HEIGHT;
+      const sw = selection.width * CELL_WIDTH;
+      const sh = selection.height * CELL_HEIGHT;
+
       this.ctx.strokeStyle = SELECTION_BORDER_COLOR;
       this.ctx.lineWidth = 1;
-      this.ctx.strokeRect(
-        selection.col * CELL_WIDTH,
-        selection.row * CELL_HEIGHT,
-        selection.width * CELL_WIDTH,
-        selection.height * CELL_HEIGHT
-      );
+      this.ctx.setLineDash([4, 3]);
+      this.ctx.strokeRect(sx, sy, sw, sh);
+      this.ctx.setLineDash([]);
+
+      // Drag handles at corners
+      if (showHandles) {
+        this.ctx.fillStyle = SELECTION_BORDER_COLOR;
+        const half = Math.floor(HANDLE_SIZE / 2);
+        const corners = [
+          [sx, sy],                 // nw
+          [sx + sw, sy],            // ne
+          [sx, sy + sh],            // sw
+          [sx + sw, sy + sh],       // se
+        ];
+        for (const [cx, cy] of corners) {
+          this.ctx.fillRect(cx - half, cy - half, HANDLE_SIZE, HANDLE_SIZE);
+        }
+      }
     }
+  }
+
+  /** Returns which corner handle the pixel coordinate is over, or null. */
+  getHandleAt(px: number, py: number, selection: Rect): HandleCorner | null {
+    const rect = this.canvas.getBoundingClientRect();
+    const x = px - rect.left;
+    const y = py - rect.top;
+
+    const sx = selection.col * CELL_WIDTH;
+    const sy = selection.row * CELL_HEIGHT;
+    const sw = selection.width * CELL_WIDTH;
+    const sh = selection.height * CELL_HEIGHT;
+
+    const corners: [number, number, HandleCorner][] = [
+      [sx, sy, "nw"],
+      [sx + sw, sy, "ne"],
+      [sx, sy + sh, "sw"],
+      [sx + sw, sy + sh, "se"],
+    ];
+
+    for (const [cx, cy, corner] of corners) {
+      if (Math.abs(x - cx) <= HANDLE_HIT_RADIUS && Math.abs(y - cy) <= HANDLE_HIT_RADIUS) {
+        return corner;
+      }
+    }
+    return null;
   }
 
   setGrid(grid: Grid): void {

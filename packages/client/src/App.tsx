@@ -103,12 +103,20 @@ export function App() {
   // fire even when the cursor leaves the canvas (fixes vertical drag).
   const onMouseMove = useCallback((e: MouseEvent) => {
     editorRef.current?.onMouseMove(e.clientX, e.clientY);
+    if (canvasRef.current && editorRef.current) {
+      canvasRef.current.style.cursor = editorRef.current.getCursor(e.clientX, e.clientY);
+    }
   }, []);
   const onMouseUp = useCallback((e: MouseEvent) => {
     editorRef.current?.onMouseUp(e.clientX, e.clientY);
     document.removeEventListener("mousemove", onMouseMove);
     document.removeEventListener("mouseup", onMouseUp);
   }, [onMouseMove]);
+  const onCanvasHover = useCallback((e: React.MouseEvent) => {
+    if (canvasRef.current && editorRef.current) {
+      canvasRef.current.style.cursor = editorRef.current.getCursor(e.clientX, e.clientY);
+    }
+  }, []);
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     editorRef.current?.onMouseDown(e.clientX, e.clientY);
     document.addEventListener("mousemove", onMouseMove);
@@ -127,6 +135,7 @@ export function App() {
       <canvas
         ref={canvasRef}
         onMouseDown={onMouseDown}
+        onMouseMove={onCanvasHover}
       />
       <div className="overlay">
         <Select

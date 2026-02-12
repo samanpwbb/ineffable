@@ -1,8 +1,8 @@
 # Ineffable
 
-ASCII canvas for designing UI layouts alongside LLMs.
+ASCII canvas for designing UI layouts alongside LLMs. Because sometimes words aren't good enough.
 
-Ineffable lets you sketch layouts and UX flows using ASCII widgets — boxes, buttons, toggles, lines, and text. The ASCII text is the source of truth: no intermediate JSON or XML. LLMs can read and edit diagram files directly.
+Ineffable lets you sketch layouts and UX flows using ASCII widgets — boxes, buttons, lines, and text. The ASCII text is the source of truth: no intermediate JSON or XML. LLMs can read and edit diagram files directly. Then give your diagrams to your LLM to build the real thing.
 
 ## Prerequisites
 
@@ -41,7 +41,6 @@ Select a tool from the floating toolbar (top-right) or use keyboard shortcuts:
 | Line   | L   | Click + drag to draw            |
 | Text   | T   | Click to place, enter text      |
 | Button | U   | Click to place, enter label     |
-| Toggle | G   | Click to place, enter label     |
 
 Press **Escape** to return to the select tool.
 
@@ -77,8 +76,7 @@ See [PATTERNS.md](PATTERNS.md) for full pattern definitions.
 ```
 Box:       ┌──────┐        Button:   [ Submit ]
            │      │
-           └──────┘        Toggle:   [x] Enabled
-                                     [ ] Disabled
+           └──────┘
 Text:      Hello world
                            Line:     ──────── (horizontal)
                                      │ (vertical)
