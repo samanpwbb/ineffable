@@ -184,8 +184,42 @@ function traceBox(grid: Grid, startCol: number, startRow: number): Widget | null
     if (grid.get(startCol + width - 1, br) !== BOX_CHARS.vertical) return null;
   }
 
+  // Check for a centered label — scan interior for a single row of text
+  let label: string | undefined;
+  const innerTop = startRow + 1;
+  const innerBottom = startRow + height - 2;
+  const innerLeft = startCol + 1;
+  const innerRight = startCol + width - 2;
+  let labelRow = -1;
+  let labelCount = 0;
+  for (let ir = innerTop; ir <= innerBottom; ir++) {
+    let hasText = false;
+    for (let ic = innerLeft; ic <= innerRight; ic++) {
+      if (grid.get(ic, ir) !== " ") { hasText = true; break; }
+    }
+    if (hasText) {
+      labelRow = ir;
+      labelCount++;
+    }
+  }
+  if (labelCount === 1) {
+    // Extract the trimmed text on that row
+    let textStart = innerLeft;
+    while (textStart <= innerRight && grid.get(textStart, labelRow) === " ") textStart++;
+    let textEnd = innerRight;
+    while (textEnd >= textStart && grid.get(textEnd, labelRow) === " ") textEnd--;
+    if (textStart <= textEnd) {
+      let text = "";
+      for (let ic = textStart; ic <= textEnd; ic++) {
+        text += grid.get(ic, labelRow);
+      }
+      label = text;
+    }
+  }
+
   return {
     type: "box",
+    label,
     rect: { col: startCol, row: startRow, width, height },
   };
 }

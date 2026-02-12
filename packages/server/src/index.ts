@@ -18,7 +18,8 @@ if (!fs.existsSync(DIAGRAMS_DIR)) {
 }
 
 const app = express();
-app.use(express.text({ type: "*/*", limit: "1mb" }));
+app.use(express.json({ limit: "1mb" }));
+app.use(express.text({ type: "text/plain", limit: "1mb" }));
 
 // CORS for local dev
 app.use((_req, res, next) => {
@@ -69,13 +70,22 @@ app.post("/ai/:name", (req, res) => {
   if (!filePath) return res.status(400).json({ error: "Invalid filename" });
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: "Not found" });
 
-  const instruction = (typeof req.body === "string" && req.body.trim()) || "repair";
+  let instruction: string;
+  let userMessage: string;
+  if (typeof req.body === "object" && req.body !== null) {
+    instruction = req.body.instruction?.trim() || "repair";
+    userMessage = req.body.userMessage?.trim() || "";
+  } else {
+    instruction = (typeof req.body === "string" && req.body.trim()) || "repair";
+    userMessage = "";
+  }
+
   if (activeJobs.has(req.params.name)) {
     return res.status(409).json({ error: "Already processing" });
   }
 
   const content = fs.readFileSync(filePath, "utf-8");
-  checkForAiDirectives(req.params.name, `# @ai ${instruction}\n${content}`);
+  checkForAiDirectives(req.params.name, `# @ai ${instruction}\n${content}`, userMessage);
   res.json({ ok: true });
 });
 
@@ -116,7 +126,7 @@ fs.watch(DIAGRAMS_DIR, (eventType, filename) => {
 const AI_DIRECTIVE_RE = /^#\s*@ai\s+(.+)$/m;
 const activeJobs = new Set<string>();
 
-function checkForAiDirectives(filename: string, content: string): void {
+function checkForAiDirectives(filename: string, content: string, userMessage = ""): void {
   if (activeJobs.has(filename)) return;
 
   const match = content.match(AI_DIRECTIVE_RE);
@@ -128,7 +138,7 @@ function checkForAiDirectives(filename: string, content: string): void {
   activeJobs.add(filename);
   broadcast({ type: "ai-status", name: filename, status: "working", instruction });
 
-  runClaude(filename, instruction)
+  runClaude(filename, instruction, userMessage)
     .then(() => {
       console.log(`[ai] Done processing ${filename}`);
       broadcast({ type: "ai-status", name: filename, status: "done", instruction });
@@ -152,25 +162,81 @@ const SYSTEM_PROMPT = [
 
 const LOOKS_LIKE_CHAT = /^(I |I'm |I need |I can|I've |It seems|Sure|Here|The |This |Let me|Unfortunately|I apologize|Could you|Please |Would you|Note:)/m;
 
-function runClaude(filename: string, instruction: string): Promise<void> {
+function runClaude(filename: string, instruction: string, userMessage = ""): Promise<void> {
   const filePath = path.join(DIAGRAMS_DIR, filename);
   const patterns = fs.readFileSync(PATTERNS_PATH, "utf-8");
   const diagramContent = fs.readFileSync(filePath, "utf-8");
 
   const isRepair = /^repair$/i.test(instruction);
+  const isRemix = /^remix$/i.test(instruction);
+  const isPredict = /^predict$/i.test(instruction);
 
-  const taskDescription = isRepair
-    ? [
-        "REPAIR this diagram.",
-        "Look for broken or incomplete widget patterns — missing box corners, unclosed edges,",
-        "misaligned borders, partially erased widgets — and fix them.",
-        "Do not add new widgets or change the layout. Only repair damaged patterns.",
-      ].join("\n")
-    : [
-        "The user has left this instruction in the file:",
-        `"${instruction}"`,
-        "\nEdit the diagram to fulfill the instruction.",
-      ].join("\n");
+  let taskDescription: string;
+
+  if (isRepair) {
+    taskDescription = [
+      "REPAIR this diagram.",
+      "Look for broken or incomplete widget patterns — missing box corners, unclosed edges,",
+      "misaligned borders, partially erased widgets — and fix them.",
+      "Do not add new widgets or change the layout. Only repair damaged patterns.",
+    ].join("\n");
+  } else if (isRemix) {
+    taskDescription = [
+      "REMIX this diagram.",
+      "Produce a completely new layout that preserves ALL existing content but rearranges it.",
+      "",
+      'What "preserve content" means:',
+      "- Every box label that exists must appear in the output (same text, not reworded)",
+      "- Every button label that exists must appear in the output (same text, not reworded)",
+      "- Every text widget that exists must appear in the output (same text, not reworded)",
+      "- The total number of boxes, buttons, text widgets, and lines should stay the same",
+      "",
+      'What "new layout" means:',
+      "- Change the positions of widgets — move things to different rows and columns",
+      "- Change box sizes (wider, taller, narrower, shorter) as long as labels still fit",
+      "- Change grouping — nest widgets inside boxes that previously were outside, or vice versa",
+      "- Change alignment — if things were stacked vertically, try horizontal, or a grid",
+      "- Change spacing between widgets",
+      "- Be creative: the result should look noticeably different, not like a minor shift",
+      "",
+      "Do not add new widgets that were not in the original.",
+      "Do not remove any widgets that were in the original.",
+      "Do not rename or reword any labels or text.",
+      "All box-drawing characters must form valid, complete boxes (no broken corners or edges).",
+      "All buttons must use correct [ Label ] syntax.",
+    ].join("\n");
+  } else if (isPredict) {
+    taskDescription = [
+      "PREDICT what comes next in this diagram and complete it.",
+      "The diagram is a work in progress. Analyze what is already there and add what is missing.",
+      "",
+      "How to analyze:",
+      '- Look for repeating patterns (e.g., a series of form fields — if there is "Username" but no "Password", add it)',
+      "- Look for incomplete structures (e.g., a header and content area but no footer — add the footer)",
+      "- Look for asymmetry that suggests missing pieces (e.g., three buttons in a row with space for a fourth)",
+      "- Look for conventional UI patterns (e.g., a login form missing a submit button, a nav bar missing expected items)",
+      '- Infer intent from labels and layout (e.g., a "Settings" box with only one option probably needs more)',
+      "",
+      "Rules for prediction:",
+      "- Preserve everything that already exists — do not move, resize, or restyle existing widgets",
+      "- Only add new widgets; never remove or modify existing ones",
+      "- Match the visual style of existing widgets: same box sizes for similar items, same spacing conventions, same alignment patterns",
+      "- Place new widgets in logical positions relative to existing ones (below, beside, continuing a sequence)",
+      "- Do not add more than what the pattern suggests — complete the thought, do not over-extend",
+      "- Use the same character conventions already present in the diagram",
+      "- If the diagram appears complete and nothing is obviously missing, output it unchanged",
+    ].join("\n");
+  } else {
+    taskDescription = [
+      "The user has left this instruction in the file:",
+      `"${instruction}"`,
+      "\nEdit the diagram to fulfill the instruction.",
+    ].join("\n");
+  }
+
+  if (userMessage) {
+    taskDescription += "\n\nAdditional user instruction: " + userMessage;
+  }
 
   const prompt = [
     "Widget pattern definitions:\n",

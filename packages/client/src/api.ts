@@ -40,12 +40,12 @@ export async function writeFile(name: string, content: string): Promise<void> {
   if (!res.ok) throw new Error(`Failed to write ${name}: ${res.status}`);
 }
 
-export async function triggerAi(name: string, instruction = "repair"): Promise<void> {
+export async function triggerAi(name: string, instruction = "repair", userMessage = ""): Promise<void> {
   const base = await getBaseUrl();
   const res = await fetch(`${base}/ai/${encodeURIComponent(name)}`, {
     method: "POST",
-    headers: { "Content-Type": "text/plain" },
-    body: instruction,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ instruction, userMessage }),
   });
   if (!res.ok) throw new Error(`Failed to trigger AI on ${name}: ${res.status}`);
 }

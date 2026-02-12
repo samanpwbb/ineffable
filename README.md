@@ -2,7 +2,7 @@
 
 ASCII canvas for designing UI layouts alongside LLMs. Because sometimes words aren't good enough.
 
-Ineffable lets you sketch layouts and UX flows using ASCII widgets — boxes, buttons, lines, and text. The ASCII text is the source of truth: no intermediate JSON or XML. LLMs can read and edit diagram files directly. Then give your diagrams to your LLM to build the real thing.
+The ASCII text is the source of truth: no intermediate JSON or XML, so LLMs can read and edit diagram files directly.
 
 ## Prerequisites
 

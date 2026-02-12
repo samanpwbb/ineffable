@@ -38,6 +38,21 @@ export class Editor {
   private resizeHandle: HandleCorner | null = null;
   private resizeAnchor: Rect | null = null; // original selection rect at resize start
 
+  // Inline editing state
+  isEditing = false;
+  private editBuffer = "";
+  private editCursorPos = 0;
+  editCursorVisible = false;
+  private editBlinkTimer: ReturnType<typeof setInterval> | null = null;
+  private editSnapshot: Grid | null = null; // grid state before editing began
+  private editIsNew = false; // true if widget was just created (Escape removes it)
+  private onRedrawCallback: (() => void) | null = null;
+
+  // Double-click detection
+  private lastClickTime = 0;
+  private lastClickCol = -1;
+  private lastClickRow = -1;
+
   // Callbacks
   private onStatusUpdate: (pos: string, tool: string, file: string) => void;
 
@@ -56,6 +71,7 @@ export class Editor {
   }
 
   setTool(tool: Tool): void {
+    if (this.isEditing) this.stopEditing(true);
     this.tool = tool;
     this.selection = null;
     this.selectedWidget = null;
@@ -64,27 +80,40 @@ export class Editor {
   }
 
   setGrid(grid: Grid): void {
+    if (this.isEditing) this.stopEditing(false);
     this.grid = grid;
     this.renderer.setGrid(grid);
     this.renderer.resize();
     this.reparse();
     this.selection = null;
     this.selectedWidget = null;
+    // Reset undo history when loading a new file
+    this.lastSavedState = grid.toString();
+    this.undoStack = [];
+    this.redoStack = [];
     this.redraw();
   }
 
   private get isResizable(): boolean {
     const t = this.selectedWidget?.type;
-    return t === "box" || t === "line";
+    return t === "box" || t === "line" || t === "button";
   }
 
+  /** Returns "horizontal" or "vertical" for line-like widgets (lines and buttons). */
   private get selectedLineDirection(): "horizontal" | "vertical" | undefined {
     const w = this.selectedWidget;
-    return w?.type === "line" ? w.direction : undefined;
+    if (w?.type === "line") return w.direction;
+    if (w?.type === "button") return "horizontal";
+    return undefined;
   }
 
   redraw(): void {
-    this.renderer.render(this.selection, this.isResizable, this.selectedLineDirection);
+    this.renderer.render(
+      this.selection,
+      this.isResizable && !this.isEditing,
+      this.selectedLineDirection,
+      this.getEditCursor(),
+    );
   }
 
   updateStatus(col: number, row: number): void {
@@ -98,7 +127,31 @@ export class Editor {
   // --- Mouse handlers ---
 
   onMouseDown(px: number, py: number): void {
+    // Commit any active inline edit when clicking
+    if (this.isEditing) {
+      this.stopEditing(true);
+    }
+
     const { col, row } = this.renderer.pixelToGrid(px, py);
+
+    // Double-click detection: edit existing button/text
+    const now = Date.now();
+    const isDoubleClick =
+      now - this.lastClickTime < 400 &&
+      col === this.lastClickCol &&
+      row === this.lastClickRow;
+    this.lastClickTime = now;
+    this.lastClickCol = col;
+    this.lastClickRow = row;
+
+    if (isDoubleClick && this.tool === "select" && this.selectedWidget) {
+      const t = this.selectedWidget.type;
+      if (t === "button" || t === "text" || t === "box") {
+        this.startEditing(false);
+        return;
+      }
+    }
+
     this.dragStart = { col, row };
     this.isDragging = false;
     this.isMoving = false;
@@ -129,11 +182,18 @@ export class Editor {
         return;
       }
 
-      // Otherwise, try to select an existing widget
+      // Otherwise, try to select an existing widget — and start a move
+      // so select + drag works in a single gesture
       const hit = widgetAt(this.widgets, col, row);
       if (hit) {
         this.selection = { ...hit.rect };
         this.selectedWidget = hit;
+        this.isMoving = true;
+        this.gridSnapshot = this.grid.clone();
+        this.moveOffset = {
+          col: col - hit.rect.col,
+          row: row - hit.rect.row,
+        };
       } else {
         this.selection = null;
         this.selectedWidget = null;
@@ -164,6 +224,11 @@ export class Editor {
       const rect = this.dragToRect(this.dragStart, { col, row });
       this.selection = rect;
       this.redraw();
+    } else if (this.tool === "button") {
+      const startCol = Math.min(this.dragStart.col, col);
+      const width = Math.max(5, Math.abs(col - this.dragStart.col) + 1);
+      this.selection = { col: startCol, row: this.dragStart.row, width, height: 1 };
+      this.redraw();
     }
   }
 
@@ -184,7 +249,10 @@ export class Editor {
     if (this.tool === "select" && this.isMoving && this.selectedWidget) {
       const newCol = col - this.moveOffset.col;
       const newRow = row - this.moveOffset.row;
-      this.moveWidget(this.selectedWidget, newCol, newRow);
+      if (newCol !== this.selectedWidget.rect.col || newRow !== this.selectedWidget.rect.row) {
+        this.moveWidget(this.selectedWidget, newCol, newRow);
+      }
+      this.gridSnapshot = null;
       this.dragStart = null;
       this.isDragging = false;
       this.isMoving = false;
@@ -198,6 +266,7 @@ export class Editor {
           type: "box",
           rect,
         });
+        this.tool = "select";
       }
     } else if (this.tool === "line" && this.dragStart) {
       const dx = Math.abs(col - this.dragStart.col);
@@ -218,25 +287,30 @@ export class Editor {
             rect: { col: this.dragStart.col, row: startRow, width: 1, height: dy + 1 },
           });
         }
+        this.tool = "select";
       }
-    } else if (this.tool === "button" && !this.isDragging) {
-      const label = prompt("Button label:");
-      if (label) {
-        this.placeWidget({
-          type: "button",
-          label,
-          rect: { col, row, width: label.length + 4, height: 1 },
-        });
+    } else if (this.tool === "button") {
+      let width = 5; // minimum: "[ _ ]"
+      if (this.isDragging && this.dragStart) {
+        width = Math.max(5, Math.abs(col - this.dragStart.col) + 1);
       }
+      const startCol = this.isDragging && this.dragStart ? Math.min(col, this.dragStart.col) : col;
+      const btnRow = this.isDragging && this.dragStart ? this.dragStart.row : row;
+      this.placeWidget({
+        type: "button",
+        label: "",
+        rect: { col: startCol, row: btnRow, width, height: 1 },
+      }, true);
+      this.tool = "select";
+      this.startEditing(true);
     } else if (this.tool === "text" && !this.isDragging) {
-      const content = prompt("Text content:");
-      if (content) {
-        this.placeWidget({
-          type: "text",
-          content,
-          rect: { col, row, width: content.length, height: 1 },
-        });
-      }
+      this.placeWidget({
+        type: "text",
+        content: "",
+        rect: { col, row, width: 1, height: 1 },
+      }, true);
+      this.tool = "select";
+      this.startEditing(true);
     }
 
     this.dragStart = null;
@@ -308,8 +382,13 @@ export class Editor {
 
   private computeResizedRect(anchor: Rect, handle: HandleCorner, col: number, row: number): Rect {
     const widget = this.selectedWidget;
-    const minW = widget?.type === "box" ? 3 : 2;
+    let minW = widget?.type === "box" ? 3 : 2;
     const minH = widget?.type === "box" ? 3 : 2;
+
+    // Button minimum width: must fit label + "[ " + " ]"
+    if (widget?.type === "button") {
+      minW = Math.max(5, widget.label.length + 4);
+    }
 
     // Fixed corner is opposite the dragged handle
     let fixedCol: number, fixedRow: number;
@@ -342,13 +421,15 @@ export class Editor {
         break;
     }
 
-    // For lines, constrain to their axis
+    // For lines and buttons, constrain to their axis
     if (widget?.type === "line") {
       if (widget.direction === "horizontal") {
         dragRow = anchor.row;
       } else {
         dragCol = anchor.col;
       }
+    } else if (widget?.type === "button") {
+      dragRow = anchor.row;
     }
 
     const newCol = Math.min(fixedCol, dragCol);
@@ -363,6 +444,11 @@ export class Editor {
       } else {
         return { col: anchor.col, row: newRow, width: 1, height: newHeight };
       }
+    }
+
+    // Buttons are always 1 row tall, horizontal only
+    if (widget?.type === "button") {
+      return { col: newCol, row: anchor.row, width: newWidth, height: 1 };
     }
 
     return { col: newCol, row: newRow, width: newWidth, height: newHeight };
@@ -430,22 +516,394 @@ export class Editor {
 
   // --- Widget placement ---
 
-  private placeWidget(widget: Widget): void {
+  private placeWidget(widget: Widget, skipSave = false): void {
     renderWidget(this.grid, widget);
     this.reparse();
     this.selection = { ...widget.rect };
     this.selectedWidget = widgetAt(this.widgets, widget.rect.col, widget.rect.row) ?? widget;
     this.redraw();
-    this.save();
+    if (!skipSave) this.save();
   }
 
   async save(): Promise<void> {
     if (!this.currentFile) return;
+    this.pushUndo();
     try {
       await writeFile(this.currentFile, this.grid.toString());
     } catch (e) {
       console.error("Failed to save:", e);
     }
+  }
+
+  // --- Widget deletion ---
+
+  deleteSelected(): void {
+    if (!this.selectedWidget || !this.selection) return;
+    const r = this.selectedWidget.rect;
+    this.grid.clearRect(r.col, r.row, r.width, r.height);
+    // Re-render widgets that were under the deleted one
+    this.reparse();
+    for (const w of this.widgets) {
+      renderWidget(this.grid, w);
+    }
+    this.selection = null;
+    this.selectedWidget = null;
+    this.reparse();
+    this.redraw();
+    this.save();
+  }
+
+  clearAll(): void {
+    this.grid.clearRect(0, 0, this.grid.width, this.grid.height);
+    this.widgets = [];
+    this.selection = null;
+    this.selectedWidget = null;
+    this.redraw();
+    this.save();
+  }
+
+  // --- Nudge & directional selection ---
+
+  nudgeSelected(direction: "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight"): void {
+    if (!this.selectedWidget) return;
+    const delta = { col: 0, row: 0 };
+    if (direction === "ArrowUp") delta.row = -1;
+    else if (direction === "ArrowDown") delta.row = 1;
+    else if (direction === "ArrowLeft") delta.col = -1;
+    else if (direction === "ArrowRight") delta.col = 1;
+
+    const newCol = this.selectedWidget.rect.col + delta.col;
+    const newRow = this.selectedWidget.rect.row + delta.row;
+    this.gridSnapshot = this.grid.clone();
+    this.moveWidget(this.selectedWidget, newCol, newRow);
+  }
+
+  selectInDirection(direction: "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight"): void {
+    if (this.widgets.length === 0) return;
+
+    // If nothing selected, select the first widget
+    if (!this.selectedWidget) {
+      const w = this.widgets[0];
+      this.selection = { ...w.rect };
+      this.selectedWidget = w;
+      this.redraw();
+      return;
+    }
+
+    const cur = this.selectedWidget.rect;
+    const cx = cur.col + cur.width / 2;
+    const cy = cur.row + cur.height / 2;
+
+    let best: Widget | null = null;
+    let bestDist = Infinity;
+
+    for (const w of this.widgets) {
+      if (w === this.selectedWidget) continue;
+      const wr = w.rect;
+      const wx = wr.col + wr.width / 2;
+      const wy = wr.row + wr.height / 2;
+      const dx = wx - cx;
+      const dy = wy - cy;
+
+      // Check if the widget is in the correct direction
+      let inDirection = false;
+      if (direction === "ArrowUp" && dy < 0) inDirection = true;
+      else if (direction === "ArrowDown" && dy > 0) inDirection = true;
+      else if (direction === "ArrowLeft" && dx < 0) inDirection = true;
+      else if (direction === "ArrowRight" && dx > 0) inDirection = true;
+
+      if (!inDirection) continue;
+
+      // Prefer widgets along the primary axis, with cross-axis as tiebreaker
+      let dist: number;
+      if (direction === "ArrowUp" || direction === "ArrowDown") {
+        dist = Math.abs(dy) + Math.abs(dx) * 0.1;
+      } else {
+        dist = Math.abs(dx) + Math.abs(dy) * 0.1;
+      }
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = w;
+      }
+    }
+
+    if (best) {
+      this.selection = { ...best.rect };
+      this.selectedWidget = best;
+      this.redraw();
+    }
+  }
+
+  // --- Undo / Redo ---
+
+  private undoStack: string[] = [];
+  private redoStack: string[] = [];
+  private lastSavedState: string | null = null;
+
+  private pushUndo(): void {
+    const state = this.grid.toString();
+    if (state === this.lastSavedState) return; // no change
+    this.undoStack.push(this.lastSavedState ?? state);
+    this.redoStack = [];
+    this.lastSavedState = state;
+    // Cap the stack
+    if (this.undoStack.length > 100) this.undoStack.shift();
+  }
+
+  undo(): void {
+    if (this.undoStack.length === 0) return;
+    const current = this.grid.toString();
+    this.redoStack.push(current);
+    const prev = this.undoStack.pop()!;
+    this.applyState(prev);
+  }
+
+  redo(): void {
+    if (this.redoStack.length === 0) return;
+    const current = this.grid.toString();
+    this.undoStack.push(current);
+    const next = this.redoStack.pop()!;
+    this.applyState(next);
+  }
+
+  private applyState(state: string): void {
+    const grid = Grid.fromString(state, this.grid.width, this.grid.height);
+    this.grid = grid;
+    this.renderer.setGrid(grid);
+    this.lastSavedState = state;
+    this.reparse();
+    this.selection = null;
+    this.selectedWidget = null;
+    this.redraw();
+    // Persist to server without pushing onto the undo stack
+    if (this.currentFile) {
+      writeFile(this.currentFile, state).catch((e) =>
+        console.error("Failed to save:", e)
+      );
+    }
+  }
+
+  // --- Inline editing ---
+
+  /** Register a callback for cursor blink redraws (called by App). */
+  setRedrawCallback(cb: () => void): void {
+    this.onRedrawCallback = cb;
+  }
+
+  startEditing(isNew: boolean): void {
+    if (!this.selectedWidget) return;
+    const w = this.selectedWidget;
+    if (w.type !== "button" && w.type !== "text" && w.type !== "box") return;
+
+    this.isEditing = true;
+    this.editIsNew = isNew;
+    this.editSnapshot = this.grid.clone();
+    // For new widgets, start with empty buffer (parser may have detected padding spaces)
+    if (isNew) {
+      this.editBuffer = "";
+    } else if (w.type === "button") {
+      this.editBuffer = w.label;
+    } else if (w.type === "box") {
+      this.editBuffer = w.label ?? "";
+    } else {
+      this.editBuffer = w.content;
+    }
+    this.editCursorPos = this.editBuffer.length;
+    this.editCursorVisible = true;
+
+    // Start blink timer
+    this.editBlinkTimer = setInterval(() => {
+      this.editCursorVisible = !this.editCursorVisible;
+      this.redraw();
+      this.onRedrawCallback?.();
+    }, 530);
+
+    this.redraw();
+  }
+
+  stopEditing(commit: boolean): void {
+    if (!this.isEditing) return;
+
+    // Stop blink
+    if (this.editBlinkTimer !== null) {
+      clearInterval(this.editBlinkTimer);
+      this.editBlinkTimer = null;
+    }
+    this.editCursorVisible = false;
+
+    // For boxes, empty label on commit is fine (just no label).
+    // For buttons/text, empty buffer on commit means cancel.
+    const shouldRevert = !commit ||
+      (this.editBuffer.length === 0 && this.selectedWidget?.type !== "box");
+    if (shouldRevert) {
+      // Cancel: restore grid to pre-edit state
+      if (this.editSnapshot) {
+        for (let r = 0; r < this.grid.height; r++) {
+          for (let c = 0; c < this.grid.width; c++) {
+            this.grid.set(c, r, this.editSnapshot.get(c, r));
+          }
+        }
+      }
+      if (this.editIsNew) {
+        // Widget was just created — remove selection
+        this.selection = null;
+        this.selectedWidget = null;
+      }
+    }
+    // If committing, the grid already has the latest content from updateEditWidget
+
+    this.isEditing = false;
+    this.editSnapshot = null;
+    this.reparse();
+    this.redraw();
+    this.save();
+  }
+
+  onKeyDown(e: KeyboardEvent): void {
+    if (!this.isEditing || !this.selectedWidget) return;
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+      this.stopEditing(true);
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      this.stopEditing(false);
+      return;
+    }
+    if (e.key === "Backspace") {
+      e.preventDefault();
+      if (this.editCursorPos > 0) {
+        this.editBuffer =
+          this.editBuffer.slice(0, this.editCursorPos - 1) +
+          this.editBuffer.slice(this.editCursorPos);
+        this.editCursorPos--;
+        this.updateEditWidget();
+      }
+      return;
+    }
+    if (e.key === "Delete") {
+      e.preventDefault();
+      if (this.editCursorPos < this.editBuffer.length) {
+        this.editBuffer =
+          this.editBuffer.slice(0, this.editCursorPos) +
+          this.editBuffer.slice(this.editCursorPos + 1);
+        this.updateEditWidget();
+      }
+      return;
+    }
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      if (this.editCursorPos > 0) {
+        this.editCursorPos--;
+        this.resetBlink();
+        this.redraw();
+      }
+      return;
+    }
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      if (this.editCursorPos < this.editBuffer.length) {
+        this.editCursorPos++;
+        this.resetBlink();
+        this.redraw();
+      }
+      return;
+    }
+
+    // Printable character
+    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      this.editBuffer =
+        this.editBuffer.slice(0, this.editCursorPos) +
+        e.key +
+        this.editBuffer.slice(this.editCursorPos);
+      this.editCursorPos++;
+      this.updateEditWidget();
+    }
+  }
+
+  /** Returns the cursor grid position for rendering, or null if not editing. */
+  getEditCursor(): { col: number; row: number; visible: boolean } | null {
+    if (!this.isEditing || !this.selectedWidget) return null;
+    const w = this.selectedWidget;
+    let row = w.rect.row;
+    let col: number;
+    if (w.type === "button") {
+      // Cursor inside the "[ ... ]" wrapper — label starts after "[ " plus centering padding
+      const innerWidth = w.rect.width - 4;
+      const padLeft = Math.floor((innerWidth - this.editBuffer.length) / 2);
+      col = w.rect.col + 2 + padLeft + this.editCursorPos;
+    } else if (w.type === "box") {
+      // Cursor centered in box interior
+      const innerWidth = w.rect.width - 2;
+      const padLeft = Math.floor((innerWidth - this.editBuffer.length) / 2);
+      col = w.rect.col + 1 + padLeft + this.editCursorPos;
+      row = w.rect.row + Math.floor(w.rect.height / 2);
+    } else {
+      col = w.rect.col + this.editCursorPos;
+    }
+    return { col, row, visible: this.editCursorVisible };
+  }
+
+  private resetBlink(): void {
+    this.editCursorVisible = true;
+    if (this.editBlinkTimer !== null) {
+      clearInterval(this.editBlinkTimer);
+    }
+    this.editBlinkTimer = setInterval(() => {
+      this.editCursorVisible = !this.editCursorVisible;
+      this.redraw();
+      this.onRedrawCallback?.();
+    }, 530);
+  }
+
+  private updateEditWidget(): void {
+    if (!this.selectedWidget) return;
+    const w = this.selectedWidget;
+
+    // Clear old footprint
+    this.grid.clearRect(w.rect.col, w.rect.row, w.rect.width, w.rect.height);
+
+    if (w.type === "button") {
+      const neededWidth = Math.max(5, this.editBuffer.length + 4);
+      if (neededWidth <= w.rect.width) {
+        // Text fits — re-render at same size (renderButton centers it)
+        const updated: Widget = { type: "button", label: this.editBuffer, rect: w.rect };
+        renderWidget(this.grid, updated);
+        this.selectedWidget = updated;
+      } else {
+        // Need to grow — expand from center, overflow right
+        const grow = neededWidth - w.rect.width;
+        const growLeft = Math.min(Math.floor(grow / 2), w.rect.col);
+        const growRight = grow - growLeft;
+        const newRect = {
+          ...w.rect,
+          col: w.rect.col - growLeft,
+          width: w.rect.width + growLeft + growRight,
+        };
+        const updated: Widget = { type: "button", label: this.editBuffer, rect: newRect };
+        renderWidget(this.grid, updated);
+        this.selectedWidget = updated;
+        this.selection = { ...newRect };
+      }
+    } else if (w.type === "box") {
+      // Re-render box with updated label — box size stays the same
+      const updated: Widget = { type: "box", label: this.editBuffer || undefined, rect: w.rect };
+      renderWidget(this.grid, updated);
+      this.selectedWidget = updated;
+    } else if (w.type === "text") {
+      const newWidth = Math.max(1, this.editBuffer.length);
+      const newRect = { ...w.rect, width: newWidth };
+      const updated: Widget = { type: "text", content: this.editBuffer, rect: newRect };
+      renderWidget(this.grid, updated);
+      this.selectedWidget = updated;
+      this.selection = { ...newRect };
+    }
+
+    this.resetBlink();
+    this.redraw();
   }
 
   // --- Cursor ---

@@ -31,6 +31,22 @@ Minimum size: 3 wide x 3 tall.
 - `│` vertical edge
 - Interior is filled with spaces
 
+A box may have a **label** — a single line of text centered in its interior.
+Boxes with exactly one row of non-space content in the interior are detected
+as labelled boxes. The label is horizontally centered on the vertical midpoint.
+
+```
+┌──────────┐
+│          │
+│  Header  │
+│          │
+└──────────┘
+```
+
+Boxes containing multiple interior widgets (child boxes, buttons, etc.) are
+not labelled boxes — the label detection only applies when there is exactly
+one row of interior text.
+
 ### Button
 
 A single-line label enclosed in square brackets with a space padding.

@@ -51,7 +51,12 @@ export class CanvasRenderer {
     };
   }
 
-  render(selection: Rect | null, showHandles = false, lineDirection?: "horizontal" | "vertical"): void {
+  render(
+    selection: Rect | null,
+    showHandles = false,
+    lineDirection?: "horizontal" | "vertical",
+    cursor?: { col: number; row: number; visible: boolean } | null,
+  ): void {
     const g = this.grid;
     const w = g.width * CELL_WIDTH;
     const h = g.height * CELL_HEIGHT;
@@ -113,6 +118,19 @@ export class CanvasRenderer {
           this.ctx.fillRect(hx - half, hy - half, HANDLE_SIZE, HANDLE_SIZE);
         }
       }
+    }
+
+    // Text editing cursor
+    if (cursor?.visible) {
+      const cx = cursor.col * CELL_WIDTH;
+      const cy = cursor.row * CELL_HEIGHT + 2;
+      this.ctx.strokeStyle = SELECTION_BORDER_COLOR;
+      this.ctx.lineWidth = 1;
+      this.ctx.setLineDash([]);
+      this.ctx.beginPath();
+      this.ctx.moveTo(cx + 0.5, cy);
+      this.ctx.lineTo(cx + 0.5, cy + FONT_SIZE);
+      this.ctx.stroke();
     }
   }
 

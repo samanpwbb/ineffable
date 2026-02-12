@@ -220,3 +220,77 @@ canvas {
   0%, 100% { opacity: 0.3; }
   50% { opacity: 1; }
 }
+
+/* ---- AI Dialog ---- */
+
+.ai-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 200;
+}
+
+.ai-dialog-popup {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 201;
+  background: #111;
+  border: 1px solid #333;
+  padding: 20px;
+  min-width: 360px;
+  max-width: 480px;
+  font-family: 'Space Mono', monospace;
+}
+
+.ai-dialog-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #ccc;
+  margin-bottom: 4px;
+}
+
+.ai-dialog-description {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 12px;
+}
+
+.ai-dialog-textarea {
+  font-family: 'Space Mono', monospace;
+  font-size: 13px;
+  background: #0a0a0a;
+  color: #999;
+  border: 1px solid #333;
+  padding: 8px;
+  width: 100%;
+  resize: vertical;
+  outline: none;
+}
+
+.ai-dialog-textarea:focus {
+  border-color: #555;
+  color: #ccc;
+}
+
+.ai-dialog-textarea::placeholder {
+  color: #444;
+}
+
+.ai-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ai-dialog-submit {
+  color: #999;
+  border-color: #555;
+}
+
+.ai-dialog-submit:hover {
+  color: #ccc;
+  border-color: #777;
+}
