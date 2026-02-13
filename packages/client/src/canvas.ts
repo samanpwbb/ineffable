@@ -13,11 +13,11 @@ const FONT_SIZE = 14;
 const FONT_FAMILY = "'Space Mono', monospace";
 const TEXT_COLOR = "#fff";
 const BG_COLOR = "#000";
-const GRID_LINE_COLOR = "#333";
+const GRID_LINE_COLOR = "#555";
 const SELECTION_BORDER_COLOR = "#f5c542";
 const MARQUEE_FILL = "rgba(245, 197, 66, 0.2)";
 const MARQUEE_BORDER = "rgba(245, 197, 66, 0.4)";
-const HOVER_BORDER_COLOR = "#666";
+const HOVER_BORDER_COLOR = "#888";
 const BOUNDING_BOX_COLOR = "rgba(245, 197, 66, 0.6)";
 const HANDLE_SIZE = 5; // px, each side of the square
 const HANDLE_HIT_RADIUS = 6; // px, hit detection radius
@@ -63,6 +63,7 @@ export class CanvasRenderer {
     hoverRect?: Rect | null,
     marquee?: Rect | null,
     boundingBox?: Rect | null,
+    hoverHandles?: { lineDirection?: "horizontal" | "vertical" } | null,
   ): void {
     const g = this.grid;
     const w = g.width * CELL_WIDTH;
@@ -118,6 +119,16 @@ export class CanvasRenderer {
         this.ctx.lineWidth = 1;
         this.ctx.setLineDash([]);
         this.ctx.strokeRect(hx, hy, hw, hh);
+
+        // Resize handles on hovered widget
+        if (hoverHandles) {
+          this.ctx.fillStyle = HOVER_BORDER_COLOR;
+          const half = Math.floor(HANDLE_SIZE / 2);
+          const handles = getHandlePositions(hx, hy, hw, hh, hoverHandles.lineDirection);
+          for (const [handleX, handleY] of handles) {
+            this.ctx.fillRect(handleX - half, handleY - half, HANDLE_SIZE, HANDLE_SIZE);
+          }
+        }
       }
     }
 

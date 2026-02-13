@@ -15,46 +15,51 @@ import {
 } from "@ineffable/core";
 import { CanvasRenderer, HandleCorner } from "./canvas.js";
 import { writeFile } from "./api.js";
+import { History } from "./history.js";
+import { EditSession } from "./editSession.js";
 
 export type Tool = "select" | WidgetType;
+
+type GridPos = { col: number; row: number };
+
+type Interaction =
+  | { type: "idle" }
+  | { type: "pending"; start: GridPos }
+  | { type: "moving"; start: GridPos; widget: Widget; offset: GridPos; snapshot: Grid; preview: Rect }
+  | { type: "movingGroup"; start: GridPos; snapshot: Grid; delta: GridPos }
+  | { type: "resizing"; start: GridPos; widget: Widget; handle: HandleCorner; anchor: Rect; snapshot: Grid; preview: Rect }
+  | { type: "boxSelecting"; start: GridPos; marquee: Rect | null }
+  | { type: "drawing"; start: GridPos; preview: Rect | null };
 
 export class Editor {
   grid: Grid;
   tool: Tool = "select";
   widgets: Widget[] = [];
-  selection: Rect | null = null;
   autoRepair = true;
-  selectedWidget: Widget | null = null;
   currentFile: string | null = null;
 
-  // Multi-selection state
+  // Selection state
   selectedWidgets: Widget[] = [];
-  private isBoxSelecting = false;
-  private marquee: Rect | null = null;
-  private groupDragDelta: { col: number; row: number } | null = null;
 
-  // Drag state
-  private dragStart: { col: number; row: number } | null = null;
-  private isDragging = false;
-  private isMoving = false;
-  private isMovingGroup = false;
-  private moveOffset: { col: number; row: number } = { col: 0, row: 0 };
-  private gridSnapshot: Grid | null = null;
+  get selectedWidget(): Widget | null { return this.selectedWidgets[0] ?? null; }
 
-  // Resize state
-  private isResizing = false;
-  private resizeHandle: HandleCorner | null = null;
-  private resizeAnchor: Rect | null = null; // original selection rect at resize start
+  // Interaction state (drag/resize/box-select/draw)
+  private interaction: Interaction = { type: "idle" };
+
+  /** The rect to display for single selection: preview rect during interaction, otherwise widget rect. */
+  private get selectionRect(): Rect | null {
+    const ix = this.interaction;
+    if (ix.type === "moving" || ix.type === "resizing") return ix.preview;
+    if (ix.type === "drawing") return ix.preview;
+    return this.selectedWidget?.rect ?? null;
+  }
 
   // Inline editing state
-  isEditing = false;
-  private editBuffer = "";
-  private editCursorPos = 0;
-  editCursorVisible = false;
-  private editBlinkTimer: ReturnType<typeof setInterval> | null = null;
-  private editSnapshot: Grid | null = null; // grid state before editing began
-  private editIsNew = false; // true if widget was just created (Escape removes it)
+  private editSession: EditSession | null = null;
   private onRedrawCallback: (() => void) | null = null;
+
+  get isEditing(): boolean { return this.editSession !== null; }
+  get editCursorVisible(): boolean { return this.editSession?.cursorVisible ?? false; }
 
   // Hover state
   private hoveredWidget: Widget | null = null;
@@ -82,40 +87,42 @@ export class Editor {
       const result = detectWidgets(this.grid, { repair: true });
       this.widgets = result.widgets;
       if (result.repairs.length > 0) {
-        // Apply the repaired grid so the visual matches the detected widgets
         this.grid = result.grid;
         this.renderer.setGrid(this.grid);
       }
     } else {
       this.widgets = detectWidgets(this.grid);
     }
-    // Widget objects are recreated — clear stale hover reference
     this.hoveredWidget = null;
   }
 
   setTool(tool: Tool): void {
-    if (this.isEditing) this.stopEditing(true);
+    if (this.isEditing) this.stopEditing();
     this.tool = tool;
-    this.selection = null;
-    this.selectedWidget = null;
     this.selectedWidgets = [];
+    this.interaction = { type: "idle" };
     this.updateStatus(0, 0);
     this.redraw();
   }
 
   setGrid(grid: Grid, resetHistory = true): void {
-    if (this.isEditing) this.stopEditing(false);
+    if (this.isEditing) this.stopEditing();
+    const prevSelected = this.selectedWidgets;
     this.grid = grid;
     this.renderer.setGrid(grid);
     this.renderer.resize();
     this.reparse();
-    this.selection = null;
-    this.selectedWidget = null;
-    this.selectedWidgets = [];
+    // Preserve selection across reloads by matching widget rects
+    if (!resetHistory && prevSelected.length > 0) {
+      this.selectedWidgets = prevSelected
+        .map(prev => this.widgets.find(w => this.rectsEqual(w.rect, prev.rect) && w.type === prev.type) ?? null)
+        .filter((w): w is Widget => w !== null);
+    } else {
+      this.selectedWidgets = [];
+    }
+    this.interaction = { type: "idle" };
     if (resetHistory) {
-      this.lastSavedState = grid.toString();
-      this.undoStack = [];
-      this.redoStack = [];
+      this.history.reset(grid.toString());
     }
     this.redraw();
   }
@@ -125,7 +132,6 @@ export class Editor {
     return t === "box" || t === "line" || t === "button";
   }
 
-  /** Returns "horizontal" or "vertical" for line-like widgets (lines and buttons). */
   private get selectedLineDirection(): "horizontal" | "vertical" | undefined {
     const w = this.selectedWidget;
     if (w?.type === "line") return w.direction;
@@ -133,14 +139,30 @@ export class Editor {
     return undefined;
   }
 
+  private static widgetResizable(w: Widget): boolean {
+    return w.type === "box" || w.type === "line" || w.type === "button";
+  }
+
+  private static widgetLineDirection(w: Widget): "horizontal" | "vertical" | undefined {
+    if (w.type === "line") return w.direction;
+    if (w.type === "button") return "horizontal";
+    return undefined;
+  }
+
   redraw(): void {
-    let selections: Rect[] = this.selectedWidgets.length > 1
-      ? this.selectedWidgets.map(w => w.rect)
-      : this.selection ? [this.selection] : [];
+    const ix = this.interaction;
+
+    let selections: Rect[];
+    if (this.selectedWidgets.length > 1) {
+      selections = this.selectedWidgets.map(w => w.rect);
+    } else {
+      const rect = this.selectionRect;
+      selections = rect ? [rect] : [];
+    }
 
     // During group drag, offset all selection rects by the drag delta
-    const d = this.groupDragDelta;
-    if (d && selections.length > 1) {
+    if (ix.type === "movingGroup" && selections.length > 1) {
+      const d = ix.delta;
       selections = selections.map(r => ({
         ...r,
         col: r.col + d.col,
@@ -158,14 +180,30 @@ export class Editor {
       boundingBox = { col: minCol, row: minRow, width: maxCol - minCol, height: maxRow - minRow };
     }
 
+    const marquee = ix.type === "boxSelecting" ? ix.marquee : null;
+
+    // Determine if hover handles should be shown
+    const hovered = this.hoveredWidget;
+    let hoverHandles: { lineDirection?: "horizontal" | "vertical" } | null = null;
+    if (hovered && Editor.widgetResizable(hovered)) {
+      const isSelected = selections.some(
+        s => s.col === hovered.rect.col && s.row === hovered.rect.row &&
+             s.width === hovered.rect.width && s.height === hovered.rect.height
+      );
+      if (!isSelected) {
+        hoverHandles = { lineDirection: Editor.widgetLineDirection(hovered) };
+      }
+    }
+
     this.renderer.render(
       selections,
       this.isResizable && !this.isEditing && this.selectedWidgets.length <= 1,
       this.selectedLineDirection,
       this.getEditCursor(),
       this.hoveredWidget?.rect ?? null,
-      this.marquee,
+      marquee,
       boundingBox,
+      hoverHandles,
     );
   }
 
@@ -180,7 +218,7 @@ export class Editor {
   // --- Hover ---
 
   onHover(px: number, py: number): void {
-    if (this.tool !== "select" || this.dragStart) return;
+    if (this.tool !== "select" || this.interaction.type !== "idle") return;
     const { col, row } = this.renderer.pixelToGrid(px, py);
     const hit = widgetAt(this.widgets, col, row);
     if (hit !== this.hoveredWidget) {
@@ -199,14 +237,14 @@ export class Editor {
   // --- Mouse handlers ---
 
   onMouseDown(px: number, py: number): void {
-    // Commit any active inline edit when clicking
     if (this.isEditing) {
-      this.stopEditing(true);
+      this.stopEditing();
     }
 
     const { col, row } = this.renderer.pixelToGrid(px, py);
+    const start = { col, row };
 
-    // Double-click detection: edit existing button/text
+    // Double-click detection
     const now = Date.now();
     const isDoubleClick =
       now - this.lastClickTime < 400 &&
@@ -224,72 +262,77 @@ export class Editor {
       }
     }
 
-    this.dragStart = { col, row };
-    this.isDragging = false;
-    this.isMoving = false;
-    this.isMovingGroup = false;
-    this.isResizing = false;
-    this.isBoxSelecting = false;
-    this.marquee = null;
-    this.groupDragDelta = null;
-    this.resizeHandle = null;
-
     if (this.tool === "select") {
-      // Check if clicking on a resize handle (single selection only)
-      if (this.selection && this.selectedWidget && this.isResizable && this.selectedWidgets.length <= 1) {
-        const handle = this.renderer.getHandleAt(px, py, this.selection, this.selectedLineDirection);
+      const selRect = this.selectionRect;
+
+      // Check resize handle (single selection only)
+      if (selRect && this.selectedWidget && this.isResizable && this.selectedWidgets.length <= 1) {
+        const handle = this.renderer.getHandleAt(px, py, selRect, this.selectedLineDirection);
         if (handle) {
-          this.isResizing = true;
-          this.resizeHandle = handle;
-          this.resizeAnchor = { ...this.selection };
-          this.gridSnapshot = this.grid.clone();
+          this.interaction = {
+            type: "resizing", start, widget: this.selectedWidget,
+            handle, anchor: { ...selRect }, snapshot: this.grid.clone(),
+            preview: { ...selRect },
+          };
           return;
         }
       }
 
-      // Check if clicking inside a widget that's part of the multi-selection
+      // Check click inside multi-selection group
       if (this.selectedWidgets.length > 1) {
         const hitInGroup = this.selectedWidgets.find(w => this.isInsideRect(col, row, w.rect));
         if (hitInGroup) {
-          this.isMovingGroup = true;
-          this.gridSnapshot = this.grid.clone();
-          this.moveOffset = { col: col - this.dragStart.col, row: row - this.dragStart.row };
+          this.interaction = {
+            type: "movingGroup", start, snapshot: this.grid.clone(),
+            delta: { col: 0, row: 0 },
+          };
           return;
         }
       }
 
-      // Check if clicking inside the current selection (start a move)
-      if (this.selection && this.selectedWidget && this.isInsideRect(col, row, this.selection)) {
-        this.isMoving = true;
-        this.gridSnapshot = this.grid.clone();
-        this.moveOffset = {
-          col: col - this.selection.col,
-          row: row - this.selection.row,
+      // Check click inside current selection (start move)
+      if (selRect && this.selectedWidget && this.isInsideRect(col, row, selRect)) {
+        this.interaction = {
+          type: "moving", start, widget: this.selectedWidget,
+          offset: { col: col - selRect.col, row: row - selRect.row },
+          snapshot: this.grid.clone(), preview: { ...selRect },
         };
         return;
       }
 
-      // Otherwise, try to select an existing widget — and start a move
-      // so select + drag works in a single gesture
+      // Check resize handle on hovered (non-selected) widget
+      if (this.hoveredWidget && Editor.widgetResizable(this.hoveredWidget)) {
+        const hoverLineDir = Editor.widgetLineDirection(this.hoveredWidget);
+        const hoverHandle = this.renderer.getHandleAt(px, py, this.hoveredWidget.rect, hoverLineDir);
+        if (hoverHandle) {
+          this.selectedWidgets = [this.hoveredWidget];
+          this.interaction = {
+            type: "resizing", start, widget: this.hoveredWidget,
+            handle: hoverHandle, anchor: { ...this.hoveredWidget.rect }, snapshot: this.grid.clone(),
+            preview: { ...this.hoveredWidget.rect },
+          };
+          return;
+        }
+      }
+
+      // Click on a widget — select + prepare move
       const hit = widgetAt(this.widgets, col, row);
       if (hit) {
-        this.selection = { ...hit.rect };
-        this.selectedWidget = hit;
         this.selectedWidgets = [hit];
-        this.isMoving = true;
-        this.gridSnapshot = this.grid.clone();
-        this.moveOffset = {
-          col: col - hit.rect.col,
-          row: row - hit.rect.row,
+        this.interaction = {
+          type: "moving", start, widget: hit,
+          offset: { col: col - hit.rect.col, row: row - hit.rect.row },
+          snapshot: this.grid.clone(), preview: { ...hit.rect },
         };
       } else {
-        // Click on empty space — start box select
-        this.selection = null;
-        this.selectedWidget = null;
+        // Empty space — start box select
         this.selectedWidgets = [];
-        this.isBoxSelecting = true;
+        this.interaction = { type: "boxSelecting", start, marquee: null };
       }
       this.redraw();
+    } else {
+      // Drawing tool — start with pending (need drag to create preview)
+      this.interaction = { type: "drawing", start, preview: null };
     }
   }
 
@@ -297,185 +340,166 @@ export class Editor {
     const { col, row } = this.renderer.pixelToGrid(px, py);
     this.updateStatus(col, row);
 
-    if (!this.dragStart) return;
-    this.isDragging = true;
+    const ix = this.interaction;
+    if (ix.type === "idle") return;
 
-    if (this.tool === "select" && this.isResizing && this.resizeAnchor && this.resizeHandle) {
-      this.selection = this.computeResizedRect(this.resizeAnchor, this.resizeHandle, col, row);
-      this.redraw();
-    } else if (this.tool === "select" && this.isMovingGroup && this.selectedWidgets.length > 1) {
-      this.groupDragDelta = this.clampDelta(
-        this.selectedWidgets.map(w => w.rect),
-        col - this.dragStart.col,
-        row - this.dragStart.row,
-      );
-      this.redraw();
-    } else if (this.tool === "select" && this.isMoving && this.selectedWidget && this.selection) {
-      // Update selection preview to show where widget will land (clamped to grid)
-      const clamped = this.clampRect({
-        ...this.selection,
-        col: col - this.moveOffset.col,
-        row: row - this.moveOffset.row,
-      });
-      this.selection = clamped;
-      this.redraw();
-    } else if (this.tool === "select" && this.isBoxSelecting && this.dragStart) {
-      this.marquee = this.dragToRect(this.dragStart, { col, row });
-      this.redraw();
-    } else if (this.tool === "box" || this.tool === "line") {
-      const rect = this.dragToRect(this.dragStart, { col, row });
-      this.selection = rect;
-      this.redraw();
-    } else if (this.tool === "button") {
-      const startCol = Math.min(this.dragStart.col, col);
-      const width = Math.max(5, Math.abs(col - this.dragStart.col) + 1);
-      this.selection = { col: startCol, row: this.dragStart.row, width, height: 1 };
-      this.redraw();
+    switch (ix.type) {
+      case "resizing": {
+        ix.preview = this.computeResizedRect(ix.anchor, ix.handle, col, row);
+        this.redraw();
+        break;
+      }
+      case "movingGroup": {
+        ix.delta = this.clampDelta(
+          this.selectedWidgets.map(w => w.rect),
+          col - ix.start.col,
+          row - ix.start.row,
+        );
+        this.redraw();
+        break;
+      }
+      case "moving": {
+        ix.preview = this.clampRect({
+          ...ix.widget.rect,
+          col: col - ix.offset.col,
+          row: row - ix.offset.row,
+        });
+        this.redraw();
+        break;
+      }
+      case "boxSelecting": {
+        ix.marquee = this.dragToRect(ix.start, { col, row });
+        this.redraw();
+        break;
+      }
+      case "drawing": {
+        if (this.tool === "box" || this.tool === "line") {
+          ix.preview = this.dragToRect(ix.start, { col, row });
+        } else if (this.tool === "button") {
+          const startCol = Math.min(ix.start.col, col);
+          const width = Math.max(5, Math.abs(col - ix.start.col) + 1);
+          ix.preview = { col: startCol, row: ix.start.row, width, height: 1 };
+        }
+        this.redraw();
+        break;
+      }
     }
   }
 
   onMouseUp(px: number, py: number): void {
     const { col, row } = this.renderer.pixelToGrid(px, py);
+    const ix = this.interaction;
 
-    if (this.tool === "select" && this.isResizing && this.selectedWidget && this.resizeAnchor && this.resizeHandle) {
-      const newRect = this.computeResizedRect(this.resizeAnchor, this.resizeHandle, col, row);
-      this.resizeWidget(this.selectedWidget, newRect);
-      this.dragStart = null;
-      this.isDragging = false;
-      this.isResizing = false;
-      this.resizeHandle = null;
-      this.resizeAnchor = null;
-      return;
-    }
-
-    if (this.tool === "select" && this.isMovingGroup && this.selectedWidgets.length > 1 && this.dragStart) {
-      const clamped = this.clampDelta(
-        this.selectedWidgets.map(w => w.rect),
-        col - this.dragStart.col,
-        row - this.dragStart.row,
-      );
-      this.groupDragDelta = null;
-      if (clamped.col !== 0 || clamped.row !== 0) {
-        this.moveWidgets(this.selectedWidgets, clamped.col, clamped.row);
+    switch (ix.type) {
+      case "resizing": {
+        const newRect = this.computeResizedRect(ix.anchor, ix.handle, col, row);
+        this.interaction = { type: "idle" };
+        this.resizeWidget(ix.widget, newRect, ix.snapshot);
+        return;
       }
-      this.gridSnapshot = null;
-      this.dragStart = null;
-      this.isDragging = false;
-      this.isMovingGroup = false;
-      return;
-    }
-
-    if (this.tool === "select" && this.isMoving && this.selectedWidget) {
-      const clamped = this.clampRect({
-        ...this.selectedWidget.rect,
-        col: col - this.moveOffset.col,
-        row: row - this.moveOffset.row,
-      });
-      if (clamped.col !== this.selectedWidget.rect.col || clamped.row !== this.selectedWidget.rect.row) {
-        this.moveWidget(this.selectedWidget, clamped.col, clamped.row);
+      case "movingGroup": {
+        const clamped = this.clampDelta(
+          this.selectedWidgets.map(w => w.rect),
+          col - ix.start.col,
+          row - ix.start.row,
+        );
+        this.interaction = { type: "idle" };
+        if (clamped.col !== 0 || clamped.row !== 0) {
+          this.moveWidgets(this.selectedWidgets, clamped.col, clamped.row, ix.snapshot);
+        } else {
+          this.redraw();
+        }
+        return;
       }
-      this.gridSnapshot = null;
-      this.dragStart = null;
-      this.isDragging = false;
-      this.isMoving = false;
-      return;
-    }
-
-    if (this.tool === "select" && this.isBoxSelecting) {
-      if (this.isDragging && this.dragStart) {
-        const marqueeRect = this.dragToRect(this.dragStart, { col, row });
-        const hits = this.widgetsOverlapping(this.widgets, marqueeRect);
-        if (hits.length > 0) {
-          this.selectedWidgets = hits;
-          this.selectedWidget = hits[0];
-          this.selection = hits.length === 1 ? { ...hits[0].rect } : null;
+      case "moving": {
+        const clamped = this.clampRect({
+          ...ix.widget.rect,
+          col: col - ix.offset.col,
+          row: row - ix.offset.row,
+        });
+        this.interaction = { type: "idle" };
+        if (clamped.col !== ix.widget.rect.col || clamped.row !== ix.widget.rect.row) {
+          this.moveWidget(ix.widget, clamped.col, clamped.row, ix.snapshot);
+        } else {
+          this.redraw();
+        }
+        return;
+      }
+      case "boxSelecting": {
+        const hasDragged = ix.marquee !== null;
+        if (hasDragged) {
+          const marqueeRect = this.dragToRect(ix.start, { col, row });
+          this.selectedWidgets = this.widgetsOverlapping(this.widgets, marqueeRect);
         } else {
           this.selectedWidgets = [];
-          this.selectedWidget = null;
-          this.selection = null;
         }
-      } else {
-        // Plain click on empty space — clear selection
-        this.selectedWidgets = [];
-        this.selectedWidget = null;
-        this.selection = null;
+        this.interaction = { type: "idle" };
+        this.redraw();
+        return;
       }
-      this.marquee = null;
-      this.isBoxSelecting = false;
-      this.dragStart = null;
-      this.isDragging = false;
-      this.redraw();
-      return;
+      case "drawing": {
+        const hasDragged = ix.preview !== null;
+        this.interaction = { type: "idle" };
+
+        if (this.tool === "box") {
+          const rect = this.dragToRect(ix.start, { col, row });
+          if (rect.width >= 3 && rect.height >= 3) {
+            this.placeWidget({ type: "box", rect });
+            this.tool = "select";
+          }
+        } else if (this.tool === "line") {
+          const dx = Math.abs(col - ix.start.col);
+          const dy = Math.abs(row - ix.start.row);
+          if (dx >= 2 || dy >= 2) {
+            if (dx >= dy) {
+              const startCol = Math.min(col, ix.start.col);
+              this.placeWidget({
+                type: "line", direction: "horizontal",
+                rect: { col: startCol, row: ix.start.row, width: dx + 1, height: 1 },
+              });
+            } else {
+              const startRow = Math.min(row, ix.start.row);
+              this.placeWidget({
+                type: "line", direction: "vertical",
+                rect: { col: ix.start.col, row: startRow, width: 1, height: dy + 1 },
+              });
+            }
+            this.tool = "select";
+          }
+        } else if (this.tool === "button") {
+          let width = 5;
+          if (hasDragged) {
+            width = Math.max(5, Math.abs(col - ix.start.col) + 1);
+          }
+          const startCol = hasDragged ? Math.min(col, ix.start.col) : col;
+          const btnRow = hasDragged ? ix.start.row : row;
+          this.placeWidget({
+            type: "button", label: "",
+            rect: { col: startCol, row: btnRow, width, height: 1 },
+          }, true);
+          this.tool = "select";
+          this.startEditing(true);
+        } else if (this.tool === "text" && !hasDragged) {
+          this.placeWidget({
+            type: "text", content: "",
+            rect: { col, row, width: 1, height: 1 },
+          }, true);
+          this.tool = "select";
+          this.startEditing(true);
+        }
+        return;
+      }
     }
 
-    if (this.tool === "box" && this.dragStart) {
-      const rect = this.dragToRect(this.dragStart, { col, row });
-      if (rect.width >= 3 && rect.height >= 3) {
-        this.placeWidget({
-          type: "box",
-          rect,
-        });
-        this.tool = "select";
-      }
-    } else if (this.tool === "line" && this.dragStart) {
-      const dx = Math.abs(col - this.dragStart.col);
-      const dy = Math.abs(row - this.dragStart.row);
-      if (dx >= 2 || dy >= 2) {
-        if (dx >= dy) {
-          const startCol = Math.min(col, this.dragStart.col);
-          this.placeWidget({
-            type: "line",
-            direction: "horizontal",
-            rect: { col: startCol, row: this.dragStart.row, width: dx + 1, height: 1 },
-          });
-        } else {
-          const startRow = Math.min(row, this.dragStart.row);
-          this.placeWidget({
-            type: "line",
-            direction: "vertical",
-            rect: { col: this.dragStart.col, row: startRow, width: 1, height: dy + 1 },
-          });
-        }
-        this.tool = "select";
-      }
-    } else if (this.tool === "button") {
-      let width = 5; // minimum: "[ _ ]"
-      if (this.isDragging && this.dragStart) {
-        width = Math.max(5, Math.abs(col - this.dragStart.col) + 1);
-      }
-      const startCol = this.isDragging && this.dragStart ? Math.min(col, this.dragStart.col) : col;
-      const btnRow = this.isDragging && this.dragStart ? this.dragStart.row : row;
-      this.placeWidget({
-        type: "button",
-        label: "",
-        rect: { col: startCol, row: btnRow, width, height: 1 },
-      }, true);
-      this.tool = "select";
-      this.startEditing(true);
-    } else if (this.tool === "text" && !this.isDragging) {
-      this.placeWidget({
-        type: "text",
-        content: "",
-        rect: { col, row, width: 1, height: 1 },
-      }, true);
-      this.tool = "select";
-      this.startEditing(true);
-    }
-
-    this.dragStart = null;
-    this.isDragging = false;
-    this.isMoving = false;
+    this.interaction = { type: "idle" };
   }
 
   // --- Widget movement ---
 
-  private moveWidget(widget: Widget, newCol: number, newRow: number): void {
-    if (!this.gridSnapshot) return;
-
-    const snapshotWidgets = detectWidgets(this.gridSnapshot);
+  private moveWidget(widget: Widget, newCol: number, newRow: number, snapshot: Grid): void {
+    const snapshotWidgets = detectWidgets(snapshot);
 
     // Restore grid to pre-move state
-    const snapshot = this.gridSnapshot;
     for (let r = 0; r < this.grid.height; r++) {
       for (let c = 0; c < this.grid.width; c++) {
         this.grid.set(c, r, snapshot.get(c, r));
@@ -486,8 +510,7 @@ export class Editor {
     const oldRect = widget.rect;
     this.grid.clearRect(oldRect.col, oldRect.row, oldRect.width, oldRect.height);
 
-    // Re-render overlapping widgets using snapshot data (not re-detected from
-    // the partially-cleared grid, which can mis-detect interior content as labels)
+    // Re-render overlapping widgets using snapshot data
     for (const w of snapshotWidgets) {
       if (this.rectsEqual(w.rect, oldRect) && w.type === widget.type) continue;
       if (this.rectsOverlap(w.rect, oldRect)) {
@@ -503,18 +526,13 @@ export class Editor {
     renderWidget(this.grid, moved);
 
     this.reparse();
-    this.selectedWidget = widgetAt(this.widgets, newCol, newRow) ?? moved;
-    this.selectedWidgets = this.selectedWidget ? [this.selectedWidget] : [];
-    this.selection = { ...moved.rect };
-    this.gridSnapshot = null;
+    const found = widgetAt(this.widgets, newCol, newRow) ?? moved;
+    this.selectedWidgets = [found];
     this.redraw();
     this.save();
   }
 
-  private moveWidgets(widgets: Widget[], deltaCol: number, deltaRow: number): void {
-    if (!this.gridSnapshot) return;
-
-    const snapshot = this.gridSnapshot;
+  private moveWidgets(widgets: Widget[], deltaCol: number, deltaRow: number, snapshot: Grid): void {
     const snapshotWidgets = detectWidgets(snapshot);
 
     // Restore grid from snapshot
@@ -556,8 +574,7 @@ export class Editor {
       width: clearMaxCol - clearMinCol, height: clearMaxRow - clearMinRow,
     };
 
-    // Re-render overlapping widgets using snapshot data (not re-detected from
-    // the partially-cleared grid, which can mis-detect interior content as labels)
+    // Re-render overlapping widgets using snapshot data
     for (const w of snapshotWidgets) {
       if (toMove.some(m => this.rectsEqual(m.rect, w.rect) && m.type === w.type)) continue;
       if (this.rectsOverlap(w.rect, clearedArea)) {
@@ -566,18 +583,12 @@ export class Editor {
     }
 
     // Render all moved widgets at new positions
-    const movedWidgets: Widget[] = [];
     for (const w of toMove) {
       const moved: Widget = {
         ...w,
-        rect: {
-          ...w.rect,
-          col: w.rect.col + deltaCol,
-          row: w.rect.row + deltaRow,
-        },
+        rect: { ...w.rect, col: w.rect.col + deltaCol, row: w.rect.row + deltaRow },
       } as Widget;
       renderWidget(this.grid, moved);
-      movedWidgets.push(moved);
     }
 
     this.reparse();
@@ -586,14 +597,9 @@ export class Editor {
     this.selectedWidgets = [];
     for (let i = 0; i < widgets.length; i++) {
       const origRect = widgets[i].rect;
-      const newCol = origRect.col + deltaCol;
-      const newRow = origRect.row + deltaRow;
-      const found = widgetAt(this.widgets, newCol, newRow);
+      const found = widgetAt(this.widgets, origRect.col + deltaCol, origRect.row + deltaRow);
       if (found) this.selectedWidgets.push(found);
     }
-    this.selectedWidget = this.selectedWidgets[0] ?? null;
-    this.selection = this.selectedWidgets.length === 1 ? { ...this.selectedWidgets[0].rect } : null;
-    this.gridSnapshot = null;
     this.redraw();
     this.save();
   }
@@ -605,12 +611,10 @@ export class Editor {
     let minW = widget?.type === "box" ? 3 : 2;
     const minH = widget?.type === "box" ? 3 : 2;
 
-    // Button minimum width: must fit label + "[ " + " ]"
     if (widget?.type === "button") {
       minW = Math.max(5, widget.label.length + 4);
     }
 
-    // Fixed corner is opposite the dragged handle
     let fixedCol: number, fixedRow: number;
     let dragCol: number, dragRow: number;
 
@@ -618,36 +622,28 @@ export class Editor {
       case "nw":
         fixedCol = anchor.col + anchor.width - 1;
         fixedRow = anchor.row + anchor.height - 1;
-        dragCol = col;
-        dragRow = row;
+        dragCol = col; dragRow = row;
         break;
       case "ne":
         fixedCol = anchor.col;
         fixedRow = anchor.row + anchor.height - 1;
-        dragCol = col;
-        dragRow = row;
+        dragCol = col; dragRow = row;
         break;
       case "sw":
         fixedCol = anchor.col + anchor.width - 1;
         fixedRow = anchor.row;
-        dragCol = col;
-        dragRow = row;
+        dragCol = col; dragRow = row;
         break;
       case "se":
         fixedCol = anchor.col;
         fixedRow = anchor.row;
-        dragCol = col;
-        dragRow = row;
+        dragCol = col; dragRow = row;
         break;
     }
 
-    // For lines and buttons, constrain to their axis
     if (widget?.type === "line") {
-      if (widget.direction === "horizontal") {
-        dragRow = anchor.row;
-      } else {
-        dragCol = anchor.col;
-      }
+      if (widget.direction === "horizontal") { dragRow = anchor.row; }
+      else { dragCol = anchor.col; }
     } else if (widget?.type === "button") {
       dragRow = anchor.row;
     }
@@ -657,7 +653,6 @@ export class Editor {
     const newWidth = Math.max(minW, Math.abs(dragCol - fixedCol) + 1);
     const newHeight = Math.max(minH, Math.abs(dragRow - fixedRow) + 1);
 
-    // For lines, keep 1-cell thickness on the non-axis dimension
     if (widget?.type === "line") {
       if (widget.direction === "horizontal") {
         return this.clampRect({ col: newCol, row: anchor.row, width: newWidth, height: 1 });
@@ -666,7 +661,6 @@ export class Editor {
       }
     }
 
-    // Buttons are always 1 row tall, horizontal only
     if (widget?.type === "button") {
       return this.clampRect({ col: newCol, row: anchor.row, width: newWidth, height: 1 });
     }
@@ -674,23 +668,17 @@ export class Editor {
     return this.clampRect({ col: newCol, row: newRow, width: newWidth, height: newHeight });
   }
 
-  private resizeWidget(widget: Widget, newRect: Rect): void {
-    if (!this.gridSnapshot) return;
-
+  private resizeWidget(widget: Widget, newRect: Rect, snapshot: Grid): void {
     // Restore grid from snapshot
-    const snapshot = this.gridSnapshot;
     for (let r = 0; r < this.grid.height; r++) {
       for (let c = 0; c < this.grid.width; c++) {
         this.grid.set(c, r, snapshot.get(c, r));
       }
     }
 
-    // Clear the widget's original footprint
     const oldRect = widget.rect;
     this.grid.clearRect(oldRect.col, oldRect.row, oldRect.width, oldRect.height);
 
-    // Re-render overlapping widgets using snapshot data (not re-detected from
-    // the partially-cleared grid, which can mis-detect interior content as labels)
     const snapshotWidgets = detectWidgets(snapshot);
     for (const w of snapshotWidgets) {
       if (this.rectsEqual(w.rect, oldRect) && w.type === widget.type) continue;
@@ -699,12 +687,10 @@ export class Editor {
       }
     }
 
-    // Build resized widget
     let resized: Widget;
     if (widget.type === "line") {
       resized = {
-        ...widget,
-        rect: newRect,
+        ...widget, rect: newRect,
         direction: newRect.width > newRect.height ? "horizontal" : "vertical",
       };
     } else {
@@ -712,11 +698,9 @@ export class Editor {
     }
     renderWidget(this.grid, resized);
 
-    // Re-render children that were inside the original box (keep absolute positions)
     if (widget.type === "box") {
       const children = widgetsInside(snapshotWidgets, oldRect);
       for (const child of children) {
-        // Only re-render if the child still fits inside the new rect
         const cr = child.rect;
         if (
           cr.col > newRect.col &&
@@ -730,10 +714,8 @@ export class Editor {
     }
 
     this.reparse();
-    this.selectedWidget = widgetAt(this.widgets, newRect.col, newRect.row) ?? resized;
-    this.selectedWidgets = this.selectedWidget ? [this.selectedWidget] : [];
-    this.selection = { ...newRect };
-    this.gridSnapshot = null;
+    const found = widgetAt(this.widgets, newRect.col, newRect.row) ?? resized;
+    this.selectedWidgets = [found];
     this.redraw();
     this.save();
   }
@@ -743,16 +725,15 @@ export class Editor {
   private placeWidget(widget: Widget, skipSave = false): void {
     renderWidget(this.grid, widget);
     this.reparse();
-    this.selection = { ...widget.rect };
-    this.selectedWidget = widgetAt(this.widgets, widget.rect.col, widget.rect.row) ?? widget;
-    this.selectedWidgets = this.selectedWidget ? [this.selectedWidget] : [];
+    const found = widgetAt(this.widgets, widget.rect.col, widget.rect.row) ?? widget;
+    this.selectedWidgets = [found];
     this.redraw();
     if (!skipSave) this.save();
   }
 
   async save(): Promise<void> {
     if (!this.currentFile) return;
-    this.pushUndo();
+    this.history.push(this.grid.toString());
     try {
       await writeFile(this.currentFile, this.grid.toString());
     } catch (e) {
@@ -763,12 +744,9 @@ export class Editor {
   // --- Widget deletion ---
 
   deleteSelected(): void {
-    const toDelete = this.selectedWidgets.length > 0
-      ? this.selectedWidgets
-      : this.selectedWidget ? [this.selectedWidget] : [];
-    if (toDelete.length === 0) return;
+    if (this.selectedWidgets.length === 0) return;
+    const toDelete = this.selectedWidgets;
 
-    // Save widget data before clearing so we re-render from correct state
     const preDeleteWidgets = [...this.widgets];
 
     let clearMinCol = Infinity, clearMinRow = Infinity;
@@ -784,15 +762,12 @@ export class Editor {
       col: clearMinCol, row: clearMinRow,
       width: clearMaxCol - clearMinCol, height: clearMaxRow - clearMinRow,
     };
-    // Re-render overlapping widgets using pre-delete data
     for (const w of preDeleteWidgets) {
       if (toDelete.includes(w)) continue;
       if (this.rectsOverlap(w.rect, clearedArea)) {
         renderWidget(this.grid, w);
       }
     }
-    this.selection = null;
-    this.selectedWidget = null;
     this.selectedWidgets = [];
     this.reparse();
     this.redraw();
@@ -802,8 +777,6 @@ export class Editor {
   clearAll(): void {
     this.grid.clearRect(0, 0, this.grid.width, this.grid.height);
     this.widgets = [];
-    this.selection = null;
-    this.selectedWidget = null;
     this.selectedWidgets = [];
     this.redraw();
     this.save();
@@ -821,8 +794,7 @@ export class Editor {
     if (this.selectedWidgets.length > 1) {
       const clampedDelta = this.clampDelta(this.selectedWidgets.map(w => w.rect), delta.col, delta.row);
       if (clampedDelta.col === 0 && clampedDelta.row === 0) return;
-      this.gridSnapshot = this.grid.clone();
-      this.moveWidgets(this.selectedWidgets, clampedDelta.col, clampedDelta.row);
+      this.moveWidgets(this.selectedWidgets, clampedDelta.col, clampedDelta.row, this.grid.clone());
       return;
     }
 
@@ -833,18 +805,14 @@ export class Editor {
       row: this.selectedWidget.rect.row + delta.row,
     });
     if (clamped.col === this.selectedWidget.rect.col && clamped.row === this.selectedWidget.rect.row) return;
-    this.gridSnapshot = this.grid.clone();
-    this.moveWidget(this.selectedWidget, clamped.col, clamped.row);
+    this.moveWidget(this.selectedWidget, clamped.col, clamped.row, this.grid.clone());
   }
 
   selectInDirection(direction: "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight"): void {
     if (this.widgets.length === 0) return;
 
-    // If nothing selected, select the first widget
     if (!this.selectedWidget) {
-      const w = this.widgets[0];
-      this.selection = { ...w.rect };
-      this.selectedWidget = w;
+      this.selectedWidgets = [this.widgets[0]];
       this.redraw();
       return;
     }
@@ -864,7 +832,6 @@ export class Editor {
       const dx = wx - cx;
       const dy = wy - cy;
 
-      // Check if the widget is in the correct direction
       let inDirection = false;
       if (direction === "ArrowUp" && dy < 0) inDirection = true;
       else if (direction === "ArrowDown" && dy > 0) inDirection = true;
@@ -873,7 +840,6 @@ export class Editor {
 
       if (!inDirection) continue;
 
-      // Prefer widgets along the primary axis, with cross-axis as tiebreaker
       let dist: number;
       if (direction === "ArrowUp" || direction === "ArrowDown") {
         dist = Math.abs(dy) + Math.abs(dx) * 0.1;
@@ -887,55 +853,32 @@ export class Editor {
     }
 
     if (best) {
-      this.selection = { ...best.rect };
-      this.selectedWidget = best;
+      this.selectedWidgets = [best];
       this.redraw();
     }
   }
 
   // --- Undo / Redo ---
 
-  private undoStack: string[] = [];
-  private redoStack: string[] = [];
-  private lastSavedState: string | null = null;
-
-  private pushUndo(): void {
-    const state = this.grid.toString();
-    if (state === this.lastSavedState) return; // no change
-    this.undoStack.push(this.lastSavedState ?? state);
-    this.redoStack = [];
-    this.lastSavedState = state;
-    // Cap the stack
-    if (this.undoStack.length > 100) this.undoStack.shift();
-  }
+  private history = new History();
 
   undo(): void {
-    if (this.undoStack.length === 0) return;
-    const current = this.grid.toString();
-    this.redoStack.push(current);
-    const prev = this.undoStack.pop()!;
-    this.applyState(prev);
+    const prev = this.history.undo();
+    if (prev) this.applyState(prev);
   }
 
   redo(): void {
-    if (this.redoStack.length === 0) return;
-    const current = this.grid.toString();
-    this.undoStack.push(current);
-    const next = this.redoStack.pop()!;
-    this.applyState(next);
+    const next = this.history.redo();
+    if (next) this.applyState(next);
   }
 
   private applyState(state: string): void {
     const grid = Grid.fromString(state, this.grid.width, this.grid.height);
     this.grid = grid;
     this.renderer.setGrid(grid);
-    this.lastSavedState = state;
     this.reparse();
-    this.selection = null;
-    this.selectedWidget = null;
     this.selectedWidgets = [];
     this.redraw();
-    // Persist to server without pushing onto the undo stack
     if (this.currentFile) {
       writeFile(this.currentFile, state).catch((e) =>
         console.error("Failed to save:", e)
@@ -945,7 +888,6 @@ export class Editor {
 
   // --- Inline editing ---
 
-  /** Register a callback for cursor blink redraws (called by App). */
   setRedrawCallback(cb: () => void): void {
     this.onRedrawCallback = cb;
   }
@@ -955,192 +897,70 @@ export class Editor {
     const w = this.selectedWidget;
     if (w.type !== "button" && w.type !== "text" && w.type !== "box") return;
 
-    // Only allow editing empty boxes (no child widgets inside)
     if (w.type === "box" && !isNew) {
       const children = widgetsInside(this.widgets, w.rect);
       if (children.length > 0) return;
     }
 
-    this.isEditing = true;
-    this.editIsNew = isNew;
-    this.editSnapshot = this.grid.clone();
-    // For new widgets, start with empty buffer (parser may have detected padding spaces)
-    if (isNew) {
-      this.editBuffer = "";
-    } else if (w.type === "button") {
-      this.editBuffer = w.label;
-    } else if (w.type === "box") {
-      this.editBuffer = w.label ?? "";
-    } else {
-      this.editBuffer = w.content;
-    }
-    this.editCursorPos = this.editBuffer.length;
-    this.editCursorVisible = true;
-
-    // Start blink timer
-    this.editBlinkTimer = setInterval(() => {
-      this.editCursorVisible = !this.editCursorVisible;
+    this.editSession = new EditSession(w, isNew, () => {
       this.redraw();
       this.onRedrawCallback?.();
-    }, 530);
+    });
 
     this.redraw();
   }
 
-  stopEditing(commit: boolean): void {
-    if (!this.isEditing) return;
+  stopEditing(): void {
+    const session = this.editSession;
+    if (!session) return;
 
-    // Stop blink
-    if (this.editBlinkTimer !== null) {
-      clearInterval(this.editBlinkTimer);
-      this.editBlinkTimer = null;
-    }
-    this.editCursorVisible = false;
-
-    // For boxes, empty label on commit is fine (just no label).
-    // For buttons/text, empty buffer on commit means cancel.
-    const shouldRevert = !commit ||
-      (this.editBuffer.length === 0 && this.selectedWidget?.type !== "box");
-    if (shouldRevert) {
-      // Cancel: restore grid to pre-edit state
-      if (this.editSnapshot) {
-        for (let r = 0; r < this.grid.height; r++) {
-          for (let c = 0; c < this.grid.width; c++) {
-            this.grid.set(c, r, this.editSnapshot.get(c, r));
-          }
-        }
-      }
-      if (this.editIsNew) {
-        // Widget was just created — remove selection
-        this.selection = null;
-        this.selectedWidget = null;
-      }
-    }
-    // If committing, the grid already has the latest content from updateEditWidget
-
-    this.isEditing = false;
-    this.editSnapshot = null;
+    session.dispose();
+    this.editSession = null;
     this.reparse();
     this.redraw();
     this.save();
   }
 
   onKeyDown(e: KeyboardEvent): void {
-    if (!this.isEditing || !this.selectedWidget) return;
+    const session = this.editSession;
+    if (!session || !this.selectedWidget) return;
 
-    if (e.key === "Enter") {
-      e.preventDefault();
-      this.stopEditing(true);
-      return;
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      this.stopEditing(false);
-      return;
-    }
-    if (e.key === "Backspace") {
-      e.preventDefault();
-      if (this.editCursorPos > 0) {
-        this.editBuffer =
-          this.editBuffer.slice(0, this.editCursorPos - 1) +
-          this.editBuffer.slice(this.editCursorPos);
-        this.editCursorPos--;
+    const action = session.handleKey(e);
+    switch (action) {
+      case "commit":
+        this.stopEditing();
+        break;
+      case "cancel":
+        this.stopEditing();
+        break;
+      case "update":
         this.updateEditWidget();
-      }
-      return;
-    }
-    if (e.key === "Delete") {
-      e.preventDefault();
-      if (this.editCursorPos < this.editBuffer.length) {
-        this.editBuffer =
-          this.editBuffer.slice(0, this.editCursorPos) +
-          this.editBuffer.slice(this.editCursorPos + 1);
-        this.updateEditWidget();
-      }
-      return;
-    }
-    if (e.key === "ArrowLeft") {
-      e.preventDefault();
-      if (this.editCursorPos > 0) {
-        this.editCursorPos--;
-        this.resetBlink();
+        break;
+      case "cursor":
         this.redraw();
-      }
-      return;
-    }
-    if (e.key === "ArrowRight") {
-      e.preventDefault();
-      if (this.editCursorPos < this.editBuffer.length) {
-        this.editCursorPos++;
-        this.resetBlink();
-        this.redraw();
-      }
-      return;
-    }
-
-    // Printable character
-    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-      e.preventDefault();
-      this.editBuffer =
-        this.editBuffer.slice(0, this.editCursorPos) +
-        e.key +
-        this.editBuffer.slice(this.editCursorPos);
-      this.editCursorPos++;
-      this.updateEditWidget();
+        break;
     }
   }
 
-  /** Returns the cursor grid position for rendering, or null if not editing. */
   getEditCursor(): { col: number; row: number; visible: boolean } | null {
-    if (!this.isEditing || !this.selectedWidget) return null;
-    const w = this.selectedWidget;
-    let row = w.rect.row;
-    let col: number;
-    if (w.type === "button") {
-      // Cursor inside the "[ ... ]" wrapper — label starts after "[ " plus centering padding
-      const innerWidth = w.rect.width - 4;
-      const padLeft = Math.floor((innerWidth - this.editBuffer.length) / 2);
-      col = w.rect.col + 2 + padLeft + this.editCursorPos;
-    } else if (w.type === "box") {
-      // Cursor centered in box interior
-      const innerWidth = w.rect.width - 2;
-      const padLeft = Math.floor((innerWidth - this.editBuffer.length) / 2);
-      col = w.rect.col + 1 + padLeft + this.editCursorPos;
-      row = w.rect.row + Math.floor(w.rect.height / 2);
-    } else {
-      col = w.rect.col + this.editCursorPos;
-    }
-    return { col, row, visible: this.editCursorVisible };
-  }
-
-  private resetBlink(): void {
-    this.editCursorVisible = true;
-    if (this.editBlinkTimer !== null) {
-      clearInterval(this.editBlinkTimer);
-    }
-    this.editBlinkTimer = setInterval(() => {
-      this.editCursorVisible = !this.editCursorVisible;
-      this.redraw();
-      this.onRedrawCallback?.();
-    }, 530);
+    if (!this.editSession || !this.selectedWidget) return null;
+    return this.editSession.getCursor(this.selectedWidget);
   }
 
   private updateEditWidget(): void {
-    if (!this.selectedWidget) return;
+    const session = this.editSession;
+    if (!session || !this.selectedWidget) return;
     const w = this.selectedWidget;
 
-    // Clear old footprint
     this.grid.clearRect(w.rect.col, w.rect.row, w.rect.width, w.rect.height);
 
     if (w.type === "button") {
-      const neededWidth = Math.max(5, this.editBuffer.length + 4);
+      const neededWidth = Math.max(5, session.buffer.length + 4);
       if (neededWidth <= w.rect.width) {
-        // Text fits — re-render at same size (renderButton centers it)
-        const updated: Widget = { type: "button", label: this.editBuffer, rect: w.rect };
+        const updated: Widget = { type: "button", label: session.buffer, rect: w.rect };
         renderWidget(this.grid, updated);
-        this.selectedWidget = updated;
+        this.selectedWidgets = [updated];
       } else {
-        // Need to grow — expand from center, overflow right
         const grow = neededWidth - w.rect.width;
         const growLeft = Math.min(Math.floor(grow / 2), w.rect.col);
         const growRight = grow - growLeft;
@@ -1149,26 +969,23 @@ export class Editor {
           col: w.rect.col - growLeft,
           width: w.rect.width + growLeft + growRight,
         };
-        const updated: Widget = { type: "button", label: this.editBuffer, rect: newRect };
+        const updated: Widget = { type: "button", label: session.buffer, rect: newRect };
         renderWidget(this.grid, updated);
-        this.selectedWidget = updated;
-        this.selection = { ...newRect };
+        this.selectedWidgets = [updated];
       }
     } else if (w.type === "box") {
-      // Re-render box with updated label — box size stays the same
-      const updated: Widget = { type: "box", label: this.editBuffer || undefined, rect: w.rect };
+      const updated: Widget = { type: "box", label: session.buffer || undefined, rect: w.rect };
       renderWidget(this.grid, updated);
-      this.selectedWidget = updated;
+      this.selectedWidgets = [updated];
     } else if (w.type === "text") {
-      const newWidth = Math.max(1, this.editBuffer.length);
+      const newWidth = Math.max(1, session.buffer.length);
       const newRect = { ...w.rect, width: newWidth };
-      const updated: Widget = { type: "text", content: this.editBuffer, rect: newRect };
+      const updated: Widget = { type: "text", content: session.buffer, rect: newRect };
       renderWidget(this.grid, updated);
-      this.selectedWidget = updated;
-      this.selection = { ...newRect };
+      this.selectedWidgets = [updated];
     }
 
-    this.resetBlink();
+    session.resetBlink();
     this.redraw();
   }
 
@@ -1176,29 +993,42 @@ export class Editor {
 
   getCursor(px: number, py: number): string {
     if (this.tool !== "select") return "crosshair";
-    if (this.selection && this.selectedWidget && this.isResizable && this.selectedWidgets.length <= 1) {
-      const handle = this.renderer.getHandleAt(px, py, this.selection, this.selectedLineDirection);
+    const selRect = this.selectionRect;
+    if (selRect && this.selectedWidget && this.isResizable && this.selectedWidgets.length <= 1) {
+      const handle = this.renderer.getHandleAt(px, py, selRect, this.selectedLineDirection);
       if (handle) {
         if (this.selectedLineDirection === "horizontal") return "ew-resize";
         if (this.selectedLineDirection === "vertical") return "ns-resize";
         const cursors: Record<string, string> = {
-          nw: "nwse-resize",
-          se: "nwse-resize",
-          ne: "nesw-resize",
-          sw: "nesw-resize",
+          nw: "nwse-resize", se: "nwse-resize",
+          ne: "nesw-resize", sw: "nesw-resize",
         };
         return cursors[handle];
       }
     }
+    // Check resize handles on hovered (non-selected) widget
+    if (this.hoveredWidget && Editor.widgetResizable(this.hoveredWidget)) {
+      const hoverLineDir = Editor.widgetLineDirection(this.hoveredWidget);
+      const hoverHandle = this.renderer.getHandleAt(px, py, this.hoveredWidget.rect, hoverLineDir);
+      if (hoverHandle) {
+        if (hoverLineDir === "horizontal") return "ew-resize";
+        if (hoverLineDir === "vertical") return "ns-resize";
+        const cursors: Record<string, string> = {
+          nw: "nwse-resize", se: "nwse-resize",
+          ne: "nesw-resize", sw: "nesw-resize",
+        };
+        return cursors[hoverHandle];
+      }
+    }
+
     const { col, row } = this.renderer.pixelToGrid(px, py);
-    // Multi-selection: show move cursor over any selected widget
     if (this.selectedWidgets.length > 1) {
       if (this.selectedWidgets.some(w => this.isInsideRect(col, row, w.rect))) {
         return "move";
       }
     }
-    if (this.selection) {
-      if (this.isInsideRect(col, row, this.selection)) {
+    if (selRect) {
+      if (this.isInsideRect(col, row, selRect)) {
         return "move";
       }
     }
@@ -1207,22 +1037,18 @@ export class Editor {
 
   // --- Helpers ---
 
-  /** Clamp a rect so it stays fully within the grid bounds. */
   private clampRect(rect: Rect): Rect {
     const col = Math.max(0, Math.min(rect.col, this.grid.width - rect.width));
     const row = Math.max(0, Math.min(rect.row, this.grid.height - rect.height));
     return { col, row, width: rect.width, height: rect.height };
   }
 
-  /** Clamp a delta so that all rects stay within bounds after applying it. */
   private clampDelta(rects: Rect[], deltaCol: number, deltaRow: number): { col: number; row: number } {
     let minCol = deltaCol, minRow = deltaRow;
     let maxCol = deltaCol, maxRow = deltaRow;
     for (const r of rects) {
-      // How far left/up can we go?
       minCol = Math.max(minCol, -r.col);
       minRow = Math.max(minRow, -r.row);
-      // How far right/down can we go?
       maxCol = Math.min(maxCol, this.grid.width - r.width - r.col);
       maxRow = Math.min(maxRow, this.grid.height - r.height - r.row);
     }
@@ -1236,10 +1062,7 @@ export class Editor {
     return col >= rect.col && col < rect.col + rect.width && row >= rect.row && row < rect.row + rect.height;
   }
 
-  private dragToRect(
-    start: { col: number; row: number },
-    end: { col: number; row: number }
-  ): Rect {
+  private dragToRect(start: GridPos, end: GridPos): Rect {
     const col = Math.min(start.col, end.col);
     const row = Math.min(start.row, end.row);
     const width = Math.abs(end.col - start.col) + 1;
