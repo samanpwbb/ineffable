@@ -1,36 +1,45 @@
 # Ineffable
 
-ASCII drawing tool for designing UI layouts alongside LLMs. Because sometimes words aren't good enough. The ASCII text is the source of truth: no intermediate JSON or XML: your agents read and edit diagram files directly.
+An ASCII diagram editor for designing UI with Claude. Because sometimes words aren't good enough.
 
-## Prerequisites
+I've always preferred designing directly in the browser. I want to work the same way with Claude Code - no mock-ups or wireframes necessary - but Claude makes UI design choices I disagree with constantly, and using _English_ to explain how to arrange things is exhausting. I discovered that sketching ASCII diagrams was a fast and effective way to communicate layout and structure. But the Claude Code prompt field is a terrible ASCII editor, so I built Ineffable.
 
-- Node.js >= 18
-- pnpm >= 10
-- Claude Code CLI (`claude`) for AI features
-
-## Installation
+## Install
 
 ```bash
-git clone <repo-url>
-cd ineffable
-pnpm install
+npm install -D ineffable
 ```
 
-## Getting started
+## Quick start
+
+Run `ineffable` in any project directory to open the editor for all `.txt` files:
 
 ```bash
-pnpm dev
+npx ineffable
 ```
 
-Opens the editor at http://localhost:5173 (API server runs on port 3001).
+Point it at a specific folder:
 
-Diagram files live in `diagrams/` as plain `.txt` files. An example is included.
+```bash
+npx ineffable ./diagrams
+```
+
+This starts a local server and opens a browser-based canvas editor. Any `.txt` files in the directory (including subdirectories) are listed in the file picker.
+
+### Options
+
+```
+ineffable [directory] [--port <port>]
+
+  directory    Target directory to scan for .txt files (default: current directory)
+  --port       Server port (default: 3001, or PORT env var)
+```
 
 ## Usage
 
 ### Drawing
 
-Select a tool from the floating toolbar (top-right) or use keyboard shortcuts:
+Select a tool from the toolbar or use keyboard shortcuts:
 
 | Tool   | Key | Interaction                     |
 |--------|-----|---------------------------------|
@@ -42,30 +51,42 @@ Select a tool from the floating toolbar (top-right) or use keyboard shortcuts:
 
 Press **Escape** to return to the select tool.
 
-### Moving widgets
+### Selecting widgets
 
-Select a widget, then click + drag it to a new position.
+Click a widget to select it. Click and drag on empty canvas space to box-select multiple widgets.
+
+### Editing widgets
+
+Double-click a text, button, or box widget to edit its label inline. Press **Enter** to save or **Escape** to cancel.
+
+### Moving and resizing
+
+- **Move**: Select widget(s), then click + drag. Children of a selected box move with it.
+- **Resize**: Select a single widget and drag one of its resize handles.
+- **Nudge**: Select widget(s) and press **Shift + Arrow keys** to move one cell at a time.
+- **Delete**: Select widget(s) and press **Delete** or **Backspace**.
+
+### Undo / Redo
+
+**Cmd+Z** to undo, **Cmd+Shift+Z** to redo (Ctrl on Windows/Linux).
 
 ### AI edits
 
-Add a `# @ai` comment to any diagram file to have Claude edit it:
+Three AI actions are available from the toolbar:
 
-```
-# see PATTERNS.md for widget syntax
-# @ai add a login form with username and password fields and a submit button
+| Action  | What it does                                                  |
+|---------|---------------------------------------------------------------|
+| Repair  | Fixes broken or overlapping widgets                           |
+| Remix   | Rearranges the layout while preserving all content            |
+| Predict | Adds new widgets based on what's already there                |
 
-┌──────────────────────────────┐
-│  My App                      │
-└──────────────────────────────┘
-```
+Click an action, optionally type additional instructions, and hit Submit. The canvas reloads live with the result.
 
-The server detects the directive, invokes Claude with the diagram content and pattern definitions, writes the result back, and the canvas reloads live. The `# @ai` line is removed after processing.
-
-You can add the directive by editing the `.txt` file directly in your editor — the server watches for changes on disk.
+AI features require the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude`) to be installed and authenticated. The server spawns `claude` as a subprocess — this uses your Anthropic API credits.
 
 ### Live reload
 
-Any external change to a `.txt` file in `diagrams/` (from an LLM, a text editor, a script) triggers a live reload in the browser via WebSocket.
+Any external change to a `.txt` file in your target directory (from an LLM, a text editor, a script) triggers a live reload in the browser via WebSocket. This means you can have Claude Code edit diagram files directly and see the results instantly.
 
 ## Widget reference
 
@@ -80,26 +101,13 @@ Text:      Hello world
                                      │ (vertical)
 ```
 
-## File format
+## Development
 
-Diagram files are plain text. Lines starting with `#` at the top of the file are treated as comments — they are preserved on save but not rendered on the canvas.
-
-```
-# see PATTERNS.md for widget syntax
-# any other comments here
-
-┌──────────┐
-│  Content  │
-└──────────┘
+```bash
+git clone <repo-url>
+cd ineffable
+pnpm install
+pnpm dev
 ```
 
-## Project structure
-
-```
-packages/
-  core/      Widget types, 2D grid, ASCII parser, renderer
-  server/    Express API + WebSocket + AI directive handler
-  client/    Canvas-based editor UI (React + Vite)
-diagrams/    Working directory for .txt diagram files
-PATTERNS.md  Widget ASCII pattern definitions (LLM context)
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for project structure and architecture details.

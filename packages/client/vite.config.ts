@@ -1,11 +1,10 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const portFile = path.resolve(__dirname, "../../.server-port");
+const portFile = path.join(os.tmpdir(), "ineffable-server-port");
 
 export default defineConfig({
   plugins: [
@@ -28,5 +27,9 @@ export default defineConfig({
   ],
   server: {
     port: 5177,
+  },
+  build: {
+    outDir: "../../client-dist",
+    emptyOutDir: true,
   },
 });

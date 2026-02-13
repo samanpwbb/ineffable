@@ -12,7 +12,8 @@ async function getBaseUrl(): Promise<string> {
     const { port } = await res.json();
     _baseUrl = `http://localhost:${port}`;
   } catch {
-    _baseUrl = "http://localhost:3001";
+    // In production the server serves the client on the same origin
+    _baseUrl = "";
   }
   return _baseUrl;
 }

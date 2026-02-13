@@ -1,10 +1,26 @@
 {
   "name": "ineffable",
-  "private": true,
+  "version": "0.1.0",
+  "description": "ASCII diagram editor for any project",
+  "type": "module",
+  "bin": {
+    "ineffable": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "client-dist/",
+    "PATTERNS.md"
+  ],
   "scripts": {
     "build": "pnpm -r build",
     "dev": "pnpm -r --parallel dev",
-    "dev:server": "pnpm --filter @ineffable/server dev",
-    "dev:client": "pnpm --filter @ineffable/client dev"
+    "dev:server": "pnpm --filter @ineffable/server dev -- ../../diagrams",
+    "dev:client": "pnpm --filter @ineffable/client dev",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "ws": "^8.18.0"
   }
 }
