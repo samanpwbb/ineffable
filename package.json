@@ -2,6 +2,7 @@
   "name": "ineffable",
   "version": "0.1.0",
   "description": "ASCII diagram editor for any project",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "ineffable": "bin/cli.js"
