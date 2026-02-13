@@ -472,14 +472,7 @@ export class Editor {
   private moveWidget(widget: Widget, newCol: number, newRow: number): void {
     if (!this.gridSnapshot) return;
 
-    const deltaCol = newCol - widget.rect.col;
-    const deltaRow = newRow - widget.rect.row;
-
-    // Find children from the snapshot (original layout before drag)
     const snapshotWidgets = detectWidgets(this.gridSnapshot);
-    const children = widget.type === "box"
-      ? widgetsInside(snapshotWidgets, widget.rect)
-      : [];
 
     // Restore grid to pre-move state
     const snapshot = this.gridSnapshot;
@@ -489,7 +482,7 @@ export class Editor {
       }
     }
 
-    // Clear the widget's original footprint (includes children for boxes)
+    // Clear the widget's original footprint
     const oldRect = widget.rect;
     this.grid.clearRect(oldRect.col, oldRect.row, oldRect.width, oldRect.height);
 
@@ -497,7 +490,6 @@ export class Editor {
     // the partially-cleared grid, which can mis-detect interior content as labels)
     for (const w of snapshotWidgets) {
       if (this.rectsEqual(w.rect, oldRect) && w.type === widget.type) continue;
-      if (children.includes(w)) continue;
       if (this.rectsOverlap(w.rect, oldRect)) {
         renderWidget(this.grid, w);
       }
@@ -509,19 +501,6 @@ export class Editor {
       rect: { ...oldRect, col: newCol, row: newRow },
     } as Widget;
     renderWidget(this.grid, moved);
-
-    // Render children at their new positions (same offset as parent)
-    for (const child of children) {
-      const movedChild: Widget = {
-        ...child,
-        rect: {
-          ...child.rect,
-          col: child.rect.col + deltaCol,
-          row: child.rect.row + deltaRow,
-        },
-      } as Widget;
-      renderWidget(this.grid, movedChild);
-    }
 
     this.reparse();
     this.selectedWidget = widgetAt(this.widgets, newCol, newRow) ?? moved;
