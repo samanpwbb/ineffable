@@ -23,6 +23,7 @@ export class Editor {
   tool: Tool = "select";
   widgets: Widget[] = [];
   selection: Rect | null = null;
+  autoRepair = true;
   selectedWidget: Widget | null = null;
   currentFile: string | null = null;
 
@@ -77,7 +78,19 @@ export class Editor {
   }
 
   reparse(): void {
-    this.widgets = detectWidgets(this.grid);
+    if (this.autoRepair) {
+      const result = detectWidgets(this.grid, { repair: true });
+      this.widgets = result.widgets;
+      if (result.repairs.length > 0) {
+        // Apply the repaired grid so the visual matches the detected widgets
+        this.grid = result.grid;
+        this.renderer.setGrid(this.grid);
+      }
+    } else {
+      this.widgets = detectWidgets(this.grid);
+    }
+    // Widget objects are recreated — clear stale hover reference
+    this.hoveredWidget = null;
   }
 
   setTool(tool: Tool): void {

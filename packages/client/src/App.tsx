@@ -21,6 +21,7 @@ export function App() {
   const [aiStatus, setAiStatus] = useState<{ status: "working" | "done" | "error"; instruction: string } | null>(null);
   const [aiDialogAction, setAiDialogAction] = useState<AiAction | null>(null);
   const [shiftHeld, setShiftHeld] = useState(false);
+  const [autoRepair, setAutoRepair] = useState(true);
 
   // Init canvas + editor
   useEffect(() => {
@@ -210,6 +211,18 @@ export function App() {
     setAiDialogAction(null);
   }, []);
 
+  const handleAutoRepairToggle = useCallback(() => {
+    setAutoRepair((prev) => {
+      const next = !prev;
+      if (editorRef.current) {
+        editorRef.current.autoRepair = next;
+        editorRef.current.reparse();
+        editorRef.current.redraw();
+      }
+      return next;
+    });
+  }, []);
+
   const handleClear = useCallback(() => {
     editorRef.current?.clearAll();
   }, []);
@@ -232,6 +245,12 @@ export function App() {
           placeholder="Select file..."
         />
         <Toolbar activeTool={activeTool} onToolChange={handleToolChange} />
+        <Button
+          className={`auto-repair-toggle${autoRepair ? " auto-repair-toggle--on" : ""}`}
+          onClick={handleAutoRepairToggle}
+        >
+          Auto-Repair {autoRepair ? "On" : "Off"}
+        </Button>
         <Button
           className="repair-btn"
           onClick={(e: React.MouseEvent) => handleAiButtonClick("repair", e)}

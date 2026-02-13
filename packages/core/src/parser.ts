@@ -1,108 +1,79 @@
 /**
- * Pattern-matching parser: detects widgets from a Grid.
- * Priority order: box, button, line, text.
+ * Parser orchestrator.
+ *
+ * Iterates registered parser plugins in priority order to detect
+ * widgets from a Grid. Each plugin returns candidates; the orchestrator
+ * manages the shared claim set and assembles the final widget list.
+ *
+ * Backward-compatible: `detectWidgets(grid)` returns `Widget[]`.
+ * With options: `detectWidgets(grid, options)` returns `DetectResult`.
  */
 
 import { Grid } from "./grid.js";
-import {
-  Widget,
-  BOX_CHARS,
-  BOX_CORNERS,
-  BUTTON_CHARS,
-  LINE_CHARS,
-  Rect,
-} from "./patterns.js";
+import { Widget, Rect } from "./patterns.js";
+import type { ParserContext, DetectOptions, DetectResult, Defect } from "./plugin.js";
+import { DEFAULT_PLUGINS } from "./plugins/index.js";
 
 /** Detect all widgets in a grid. */
-export function detectWidgets(grid: Grid): Widget[] {
+export function detectWidgets(grid: Grid): Widget[];
+export function detectWidgets(grid: Grid, options: DetectOptions): DetectResult;
+export function detectWidgets(grid: Grid, options?: DetectOptions): Widget[] | DetectResult {
+  const plugins = [...(options?.plugins ?? DEFAULT_PLUGINS)].sort(
+    (a, b) => a.priority - b.priority,
+  );
+
+  let workingGrid = grid;
+  const allRepairs: Defect[] = [];
+
+  // Repair pass: detect partial candidates, repair on cloned grid, re-detect
+  if (options?.repair) {
+    const threshold = options.repairThreshold ?? 0.7;
+    const ctx = createContext(workingGrid);
+    let didRepair = false;
+    let cloned: Grid | null = null;
+
+    for (const plugin of plugins) {
+      const candidates = plugin.detect(ctx);
+      for (const candidate of candidates) {
+        if (candidate.confidence >= 1.0) {
+          // Accept valid candidates and claim so later plugins see them
+          ctx.claim(candidate.cells);
+        } else if (candidate.confidence >= threshold && candidate.defects?.length) {
+          if (!cloned) cloned = workingGrid.clone();
+          const repaired = plugin.repair(cloned, candidate);
+          if (repaired) {
+            cloned = repaired;
+            didRepair = true;
+            allRepairs.push(...(candidate.defects ?? []));
+          }
+        }
+      }
+    }
+
+    if (didRepair && cloned) {
+      workingGrid = cloned;
+    }
+  }
+
+  // Main detection pass
+  const ctx = createContext(workingGrid);
   const widgets: Widget[] = [];
-  // Track which cells are "claimed" by a detected widget
-  const claimed = new Set<string>();
-  const key = (c: number, r: number) => `${c},${r}`;
 
-  // 1. Detect boxes
-  for (let r = 0; r < grid.height; r++) {
-    for (let c = 0; c < grid.width; c++) {
-      if (claimed.has(key(c, r))) continue;
-      if (grid.get(c, r) !== BOX_CHARS.topLeft) continue;
-
-      const box = traceBox(grid, c, r);
-      if (box) {
-        widgets.push(box);
-        claimBorder(claimed, box.rect, key);
+  for (const plugin of plugins) {
+    const candidates = plugin.detect(ctx);
+    for (const candidate of candidates) {
+      if (candidate.confidence >= 1.0) {
+        widgets.push(candidate.widget);
+        ctx.claim(candidate.cells);
       }
     }
   }
 
-  // 2. Detect buttons
-  for (let r = 0; r < grid.height; r++) {
-    for (let c = 0; c < grid.width; c++) {
-      if (claimed.has(key(c, r))) continue;
-      if (grid.get(c, r) !== "[") continue;
-      if (grid.get(c + 1, r) !== " ") continue;
-
-      const btn = traceButton(grid, c, r);
-      if (btn) {
-        widgets.push(btn);
-        claimRect(claimed, btn.rect, key);
-      }
-    }
-  }
-
-  // 3. Detect lines
-  for (let r = 0; r < grid.height; r++) {
-    for (let c = 0; c < grid.width; c++) {
-      if (claimed.has(key(c, r))) continue;
-
-      if (grid.get(c, r) === LINE_CHARS.horizontal) {
-        const hLine = traceHorizontalLine(grid, c, r, claimed, key);
-        if (hLine) {
-          widgets.push(hLine);
-          claimRect(claimed, hLine.rect, key);
-        }
-      } else if (grid.get(c, r) === LINE_CHARS.vertical) {
-        const vLine = traceVerticalLine(grid, c, r, claimed, key);
-        if (vLine) {
-          widgets.push(vLine);
-          claimRect(claimed, vLine.rect, key);
-        }
-      }
-    }
-  }
-
-  // 5. Detect text (anything unclaimed and non-space)
-  for (let r = 0; r < grid.height; r++) {
-    let textStart = -1;
-    for (let c = 0; c <= grid.width; c++) {
-      const ch = c < grid.width ? grid.get(c, r) : " ";
-      const isClaimed = c < grid.width && claimed.has(key(c, r));
-
-      if (ch !== " " && !isClaimed) {
-        if (textStart === -1) textStart = c;
-      } else {
-        if (textStart !== -1) {
-          let content = "";
-          for (let tc = textStart; tc < c; tc++) {
-            content += grid.get(tc, r);
-          }
-          widgets.push({
-            type: "text",
-            content,
-            rect: { col: textStart, row: r, width: c - textStart, height: 1 },
-          });
-          for (let tc = textStart; tc < c; tc++) {
-            claimed.add(key(tc, r));
-          }
-          textStart = -1;
-        }
-      }
-    }
-  }
-
-  return widgets;
+  if (!options) return widgets;
+  return { widgets, grid: workingGrid, repairs: allRepairs };
 }
 
-/** Find the widget at a specific grid coordinate, if any. Returns the smallest (most specific) match. */
+/** Find the widget at a specific grid coordinate. Returns the smallest (most specific) match. */
 export function widgetAt(widgets: Widget[], col: number, row: number): Widget | null {
   let best: Widget | null = null;
   let bestArea = Infinity;
@@ -132,157 +103,15 @@ export function widgetsInside(widgets: Widget[], container: Rect): Widget[] {
   });
 }
 
-// --- Tracing helpers ---
+// ─── Internal ───────────────────────────────────────────────────────────────
 
-function claimRect(claimed: Set<string>, rect: Rect, key: (c: number, r: number) => string): void {
-  for (let r = rect.row; r < rect.row + rect.height; r++) {
-    for (let c = rect.col; c < rect.col + rect.width; c++) {
-      claimed.add(key(c, r));
-    }
-  }
-}
-
-function claimBorder(claimed: Set<string>, rect: Rect, key: (c: number, r: number) => string): void {
-  const { col, row, width, height } = rect;
-  // Top and bottom edges
-  for (let c = col; c < col + width; c++) {
-    claimed.add(key(c, row));
-    claimed.add(key(c, row + height - 1));
-  }
-  // Left and right edges (excluding corners already claimed)
-  for (let r = row + 1; r < row + height - 1; r++) {
-    claimed.add(key(col, r));
-    claimed.add(key(col + width - 1, r));
-  }
-}
-
-function traceBox(grid: Grid, startCol: number, startRow: number): Widget | null {
-  // Find top-right corner
-  let c = startCol + 1;
-  while (c < grid.width && grid.get(c, startRow) === BOX_CHARS.horizontal) c++;
-  if (grid.get(c, startRow) !== BOX_CHARS.topRight) return null;
-  const width = c - startCol + 1;
-  if (width < 3) return null;
-
-  // Find bottom-left corner
-  let r = startRow + 1;
-  while (r < grid.height && grid.get(startCol, r) === BOX_CHARS.vertical) r++;
-  if (grid.get(startCol, r) !== BOX_CHARS.bottomLeft) return null;
-  const height = r - startRow + 1;
-  if (height < 3) return null;
-
-  // Verify bottom-right corner
-  if (grid.get(startCol + width - 1, startRow + height - 1) !== BOX_CHARS.bottomRight) return null;
-
-  // Verify bottom edge
-  for (let bc = startCol + 1; bc < startCol + width - 1; bc++) {
-    if (grid.get(bc, startRow + height - 1) !== BOX_CHARS.horizontal) return null;
-  }
-
-  // Verify right edge
-  for (let br = startRow + 1; br < startRow + height - 1; br++) {
-    if (grid.get(startCol + width - 1, br) !== BOX_CHARS.vertical) return null;
-  }
-
-  // Check for a centered label — scan interior for a single row of text
-  let label: string | undefined;
-  const innerTop = startRow + 1;
-  const innerBottom = startRow + height - 2;
-  const innerLeft = startCol + 1;
-  const innerRight = startCol + width - 2;
-  let labelRow = -1;
-  let labelCount = 0;
-  for (let ir = innerTop; ir <= innerBottom; ir++) {
-    let hasText = false;
-    for (let ic = innerLeft; ic <= innerRight; ic++) {
-      if (grid.get(ic, ir) !== " ") { hasText = true; break; }
-    }
-    if (hasText) {
-      labelRow = ir;
-      labelCount++;
-    }
-  }
-  if (labelCount === 1) {
-    // Extract the trimmed text on that row
-    let textStart = innerLeft;
-    while (textStart <= innerRight && grid.get(textStart, labelRow) === " ") textStart++;
-    let textEnd = innerRight;
-    while (textEnd >= textStart && grid.get(textEnd, labelRow) === " ") textEnd--;
-    if (textStart <= textEnd) {
-      let text = "";
-      for (let ic = textStart; ic <= textEnd; ic++) {
-        text += grid.get(ic, labelRow);
-      }
-      label = text;
-    }
-  }
-
+function createContext(grid: Grid): ParserContext {
+  const claimed = new Set<string>();
+  const key = (c: number, r: number) => `${c},${r}`;
   return {
-    type: "box",
-    label,
-    rect: { col: startCol, row: startRow, width, height },
-  };
-}
-
-function traceButton(grid: Grid, startCol: number, startRow: number): Widget | null {
-  // Pattern: [ Label ]
-  // Already verified grid[startCol] === "[" and grid[startCol+1] === " "
-  let c = startCol + 2;
-  let label = "";
-  while (c < grid.width) {
-    if (grid.get(c, startRow) === " " && grid.get(c + 1, startRow) === "]") {
-      // Found closing " ]"
-      const trimmed = label.trim();
-      if (trimmed.length === 0) return null;
-      const width = c + 2 - startCol;
-      return {
-        type: "button",
-        label: trimmed,
-        rect: { col: startCol, row: startRow, width, height: 1 },
-      };
-    }
-    label += grid.get(c, startRow);
-    c++;
-  }
-  return null;
-}
-
-function traceHorizontalLine(
-  grid: Grid,
-  startCol: number,
-  startRow: number,
-  claimed: Set<string>,
-  key: (c: number, r: number) => string
-): Widget | null {
-  let c = startCol;
-  while (c < grid.width && grid.get(c, startRow) === LINE_CHARS.horizontal && !claimed.has(key(c, startRow))) {
-    c++;
-  }
-  const length = c - startCol;
-  if (length < 2) return null;
-  return {
-    type: "line",
-    direction: "horizontal",
-    rect: { col: startCol, row: startRow, width: length, height: 1 },
-  };
-}
-
-function traceVerticalLine(
-  grid: Grid,
-  startCol: number,
-  startRow: number,
-  claimed: Set<string>,
-  key: (c: number, r: number) => string
-): Widget | null {
-  let r = startRow;
-  while (r < grid.height && grid.get(startCol, r) === LINE_CHARS.vertical && !claimed.has(key(startCol, r))) {
-    r++;
-  }
-  const length = r - startRow;
-  if (length < 2) return null;
-  return {
-    type: "line",
-    direction: "vertical",
-    rect: { col: startCol, row: startRow, width: 1, height: length },
+    grid,
+    isClaimed: (col, row) => claimed.has(key(col, row)),
+    claim: (cells) => { for (const cell of cells) claimed.add(cell); },
+    key,
   };
 }

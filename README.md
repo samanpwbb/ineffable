@@ -1,8 +1,6 @@
 # Ineffable
 
-ASCII canvas for designing UI layouts alongside LLMs. Because sometimes words aren't good enough.
-
-The ASCII text is the source of truth: no intermediate JSON or XML, so LLMs can read and edit diagram files directly.
+ASCII drawing tool for designing UI layouts alongside LLMs. Because sometimes words aren't good enough. The ASCII text is the source of truth: no intermediate JSON or XML: your agents read and edit diagram files directly.
 
 ## Prerequisites
 

@@ -162,6 +162,18 @@ canvas {
   cursor: default;
 }
 
+/* ---- Auto-Repair Toggle ---- */
+
+.auto-repair-toggle {
+  font-size: 11px;
+  text-align: center;
+}
+
+.auto-repair-toggle--on {
+  color: #999;
+  border-color: #555;
+}
+
 /* ---- Status bar (bottom-right) ---- */
 
 .status-bar {
