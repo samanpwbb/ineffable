@@ -291,18 +291,20 @@ export class Editor {
       this.selection = this.computeResizedRect(this.resizeAnchor, this.resizeHandle, col, row);
       this.redraw();
     } else if (this.tool === "select" && this.isMovingGroup && this.selectedWidgets.length > 1) {
-      this.groupDragDelta = {
-        col: col - this.dragStart.col,
-        row: row - this.dragStart.row,
-      };
+      this.groupDragDelta = this.clampDelta(
+        this.selectedWidgets.map(w => w.rect),
+        col - this.dragStart.col,
+        row - this.dragStart.row,
+      );
       this.redraw();
     } else if (this.tool === "select" && this.isMoving && this.selectedWidget && this.selection) {
-      // Update selection preview to show where widget will land
-      this.selection = {
+      // Update selection preview to show where widget will land (clamped to grid)
+      const clamped = this.clampRect({
         ...this.selection,
         col: col - this.moveOffset.col,
         row: row - this.moveOffset.row,
-      };
+      });
+      this.selection = clamped;
       this.redraw();
     } else if (this.tool === "select" && this.isBoxSelecting && this.dragStart) {
       this.marquee = this.dragToRect(this.dragStart, { col, row });
@@ -334,11 +336,14 @@ export class Editor {
     }
 
     if (this.tool === "select" && this.isMovingGroup && this.selectedWidgets.length > 1 && this.dragStart) {
-      const deltaCol = col - this.dragStart.col;
-      const deltaRow = row - this.dragStart.row;
+      const clamped = this.clampDelta(
+        this.selectedWidgets.map(w => w.rect),
+        col - this.dragStart.col,
+        row - this.dragStart.row,
+      );
       this.groupDragDelta = null;
-      if (deltaCol !== 0 || deltaRow !== 0) {
-        this.moveWidgets(this.selectedWidgets, deltaCol, deltaRow);
+      if (clamped.col !== 0 || clamped.row !== 0) {
+        this.moveWidgets(this.selectedWidgets, clamped.col, clamped.row);
       }
       this.gridSnapshot = null;
       this.dragStart = null;
@@ -348,10 +353,13 @@ export class Editor {
     }
 
     if (this.tool === "select" && this.isMoving && this.selectedWidget) {
-      const newCol = col - this.moveOffset.col;
-      const newRow = row - this.moveOffset.row;
-      if (newCol !== this.selectedWidget.rect.col || newRow !== this.selectedWidget.rect.row) {
-        this.moveWidget(this.selectedWidget, newCol, newRow);
+      const clamped = this.clampRect({
+        ...this.selectedWidget.rect,
+        col: col - this.moveOffset.col,
+        row: row - this.moveOffset.row,
+      });
+      if (clamped.col !== this.selectedWidget.rect.col || clamped.row !== this.selectedWidget.rect.row) {
+        this.moveWidget(this.selectedWidget, clamped.col, clamped.row);
       }
       this.gridSnapshot = null;
       this.dragStart = null;
@@ -504,6 +512,7 @@ export class Editor {
 
     this.reparse();
     this.selectedWidget = widgetAt(this.widgets, newCol, newRow) ?? moved;
+    this.selectedWidgets = this.selectedWidget ? [this.selectedWidget] : [];
     this.selection = { ...moved.rect };
     this.gridSnapshot = null;
     this.redraw();
@@ -659,18 +668,18 @@ export class Editor {
     // For lines, keep 1-cell thickness on the non-axis dimension
     if (widget?.type === "line") {
       if (widget.direction === "horizontal") {
-        return { col: newCol, row: anchor.row, width: newWidth, height: 1 };
+        return this.clampRect({ col: newCol, row: anchor.row, width: newWidth, height: 1 });
       } else {
-        return { col: anchor.col, row: newRow, width: 1, height: newHeight };
+        return this.clampRect({ col: anchor.col, row: newRow, width: 1, height: newHeight });
       }
     }
 
     // Buttons are always 1 row tall, horizontal only
     if (widget?.type === "button") {
-      return { col: newCol, row: anchor.row, width: newWidth, height: 1 };
+      return this.clampRect({ col: newCol, row: anchor.row, width: newWidth, height: 1 });
     }
 
-    return { col: newCol, row: newRow, width: newWidth, height: newHeight };
+    return this.clampRect({ col: newCol, row: newRow, width: newWidth, height: newHeight });
   }
 
   private resizeWidget(widget: Widget, newRect: Rect): void {
@@ -730,6 +739,7 @@ export class Editor {
 
     this.reparse();
     this.selectedWidget = widgetAt(this.widgets, newRect.col, newRect.row) ?? resized;
+    this.selectedWidgets = this.selectedWidget ? [this.selectedWidget] : [];
     this.selection = { ...newRect };
     this.gridSnapshot = null;
     this.redraw();
@@ -743,6 +753,7 @@ export class Editor {
     this.reparse();
     this.selection = { ...widget.rect };
     this.selectedWidget = widgetAt(this.widgets, widget.rect.col, widget.rect.row) ?? widget;
+    this.selectedWidgets = this.selectedWidget ? [this.selectedWidget] : [];
     this.redraw();
     if (!skipSave) this.save();
   }
@@ -816,16 +827,22 @@ export class Editor {
     else if (direction === "ArrowRight") delta.col = 1;
 
     if (this.selectedWidgets.length > 1) {
+      const clampedDelta = this.clampDelta(this.selectedWidgets.map(w => w.rect), delta.col, delta.row);
+      if (clampedDelta.col === 0 && clampedDelta.row === 0) return;
       this.gridSnapshot = this.grid.clone();
-      this.moveWidgets(this.selectedWidgets, delta.col, delta.row);
+      this.moveWidgets(this.selectedWidgets, clampedDelta.col, clampedDelta.row);
       return;
     }
 
     if (!this.selectedWidget) return;
-    const newCol = this.selectedWidget.rect.col + delta.col;
-    const newRow = this.selectedWidget.rect.row + delta.row;
+    const clamped = this.clampRect({
+      ...this.selectedWidget.rect,
+      col: this.selectedWidget.rect.col + delta.col,
+      row: this.selectedWidget.rect.row + delta.row,
+    });
+    if (clamped.col === this.selectedWidget.rect.col && clamped.row === this.selectedWidget.rect.row) return;
     this.gridSnapshot = this.grid.clone();
-    this.moveWidget(this.selectedWidget, newCol, newRow);
+    this.moveWidget(this.selectedWidget, clamped.col, clamped.row);
   }
 
   selectInDirection(direction: "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight"): void {
@@ -1197,6 +1214,31 @@ export class Editor {
   }
 
   // --- Helpers ---
+
+  /** Clamp a rect so it stays fully within the grid bounds. */
+  private clampRect(rect: Rect): Rect {
+    const col = Math.max(0, Math.min(rect.col, this.grid.width - rect.width));
+    const row = Math.max(0, Math.min(rect.row, this.grid.height - rect.height));
+    return { col, row, width: rect.width, height: rect.height };
+  }
+
+  /** Clamp a delta so that all rects stay within bounds after applying it. */
+  private clampDelta(rects: Rect[], deltaCol: number, deltaRow: number): { col: number; row: number } {
+    let minCol = deltaCol, minRow = deltaRow;
+    let maxCol = deltaCol, maxRow = deltaRow;
+    for (const r of rects) {
+      // How far left/up can we go?
+      minCol = Math.max(minCol, -r.col);
+      minRow = Math.max(minRow, -r.row);
+      // How far right/down can we go?
+      maxCol = Math.min(maxCol, this.grid.width - r.width - r.col);
+      maxRow = Math.min(maxRow, this.grid.height - r.height - r.row);
+    }
+    return {
+      col: Math.max(minCol, Math.min(deltaCol, maxCol)),
+      row: Math.max(minRow, Math.min(deltaRow, maxRow)),
+    };
+  }
 
   private isInsideRect(col: number, row: number, rect: Rect): boolean {
     return col >= rect.col && col < rect.col + rect.width && row >= rect.row && row < rect.row + rect.height;
