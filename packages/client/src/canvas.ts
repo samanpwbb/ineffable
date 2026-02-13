@@ -15,6 +15,10 @@ const TEXT_COLOR = "#fff";
 const BG_COLOR = "#000";
 const GRID_LINE_COLOR = "#111";
 const SELECTION_BORDER_COLOR = "#f5c542";
+const MARQUEE_FILL = "rgba(245, 197, 66, 0.05)";
+const MARQUEE_BORDER = "rgba(245, 197, 66, 0.4)";
+const HOVER_BORDER_COLOR = "#333";
+const BOUNDING_BOX_COLOR = "rgba(245, 197, 66, 0.6)";
 const HANDLE_SIZE = 5; // px, each side of the square
 const HANDLE_HIT_RADIUS = 6; // px, hit detection radius
 
@@ -52,10 +56,13 @@ export class CanvasRenderer {
   }
 
   render(
-    selection: Rect | null,
+    selections: Rect[],
     showHandles = false,
     lineDirection?: "horizontal" | "vertical",
     cursor?: { col: number; row: number; visible: boolean } | null,
+    hoverRect?: Rect | null,
+    marquee?: Rect | null,
+    boundingBox?: Rect | null,
   ): void {
     const g = this.grid;
     const w = g.width * CELL_WIDTH;
@@ -96,12 +103,30 @@ export class CanvasRenderer {
       }
     }
 
-    // Selection highlight
-    if (selection) {
-      const sx = selection.col * CELL_WIDTH;
-      const sy = selection.row * CELL_HEIGHT;
-      const sw = selection.width * CELL_WIDTH;
-      const sh = selection.height * CELL_HEIGHT;
+    // Hover highlight (drawn before selection so selection renders on top)
+    if (hoverRect) {
+      const isSelected = selections.some(
+        s => s.col === hoverRect.col && s.row === hoverRect.row &&
+             s.width === hoverRect.width && s.height === hoverRect.height
+      );
+      if (!isSelected) {
+        const hx = hoverRect.col * CELL_WIDTH;
+        const hy = hoverRect.row * CELL_HEIGHT;
+        const hw = hoverRect.width * CELL_WIDTH;
+        const hh = hoverRect.height * CELL_HEIGHT;
+        this.ctx.strokeStyle = HOVER_BORDER_COLOR;
+        this.ctx.lineWidth = 1;
+        this.ctx.setLineDash([]);
+        this.ctx.strokeRect(hx, hy, hw, hh);
+      }
+    }
+
+    // Selection highlights
+    for (const sel of selections) {
+      const sx = sel.col * CELL_WIDTH;
+      const sy = sel.row * CELL_HEIGHT;
+      const sw = sel.width * CELL_WIDTH;
+      const sh = sel.height * CELL_HEIGHT;
 
       this.ctx.strokeStyle = SELECTION_BORDER_COLOR;
       this.ctx.lineWidth = 1;
@@ -109,8 +134,8 @@ export class CanvasRenderer {
       this.ctx.strokeRect(sx, sy, sw, sh);
       this.ctx.setLineDash([]);
 
-      // Drag handles
-      if (showHandles) {
+      // Drag handles (only for single selection)
+      if (showHandles && selections.length === 1) {
         this.ctx.fillStyle = SELECTION_BORDER_COLOR;
         const half = Math.floor(HANDLE_SIZE / 2);
         const handles = getHandlePositions(sx, sy, sw, sh, lineDirection);
@@ -118,6 +143,34 @@ export class CanvasRenderer {
           this.ctx.fillRect(hx - half, hy - half, HANDLE_SIZE, HANDLE_SIZE);
         }
       }
+    }
+
+    // Bounding box around multi-selection
+    if (boundingBox && selections.length > 1) {
+      const bx = boundingBox.col * CELL_WIDTH;
+      const by = boundingBox.row * CELL_HEIGHT;
+      const bw = boundingBox.width * CELL_WIDTH;
+      const bh = boundingBox.height * CELL_HEIGHT;
+      this.ctx.strokeStyle = BOUNDING_BOX_COLOR;
+      this.ctx.lineWidth = 1;
+      this.ctx.setLineDash([4, 3]);
+      this.ctx.strokeRect(bx, by, bw, bh);
+      this.ctx.setLineDash([]);
+    }
+
+    // Marquee (box-select preview)
+    if (marquee) {
+      const mx = marquee.col * CELL_WIDTH;
+      const my = marquee.row * CELL_HEIGHT;
+      const mw = marquee.width * CELL_WIDTH;
+      const mh = marquee.height * CELL_HEIGHT;
+      this.ctx.fillStyle = MARQUEE_FILL;
+      this.ctx.fillRect(mx, my, mw, mh);
+      this.ctx.strokeStyle = MARQUEE_BORDER;
+      this.ctx.lineWidth = 1;
+      this.ctx.setLineDash([4, 3]);
+      this.ctx.strokeRect(mx, my, mw, mh);
+      this.ctx.setLineDash([]);
     }
 
     // Text editing cursor

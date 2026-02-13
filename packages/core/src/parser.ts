@@ -232,11 +232,12 @@ function traceButton(grid: Grid, startCol: number, startRow: number): Widget | n
   while (c < grid.width) {
     if (grid.get(c, startRow) === " " && grid.get(c + 1, startRow) === "]") {
       // Found closing " ]"
-      if (label.length === 0) return null;
+      const trimmed = label.trim();
+      if (trimmed.length === 0) return null;
       const width = c + 2 - startCol;
       return {
         type: "button",
-        label,
+        label: trimmed,
         rect: { col: startCol, row: startRow, width, height: 1 },
       };
     }

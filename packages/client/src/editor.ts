@@ -26,10 +26,17 @@ export class Editor {
   selectedWidget: Widget | null = null;
   currentFile: string | null = null;
 
+  // Multi-selection state
+  selectedWidgets: Widget[] = [];
+  private isBoxSelecting = false;
+  private marquee: Rect | null = null;
+  private groupDragDelta: { col: number; row: number } | null = null;
+
   // Drag state
   private dragStart: { col: number; row: number } | null = null;
   private isDragging = false;
   private isMoving = false;
+  private isMovingGroup = false;
   private moveOffset: { col: number; row: number } = { col: 0, row: 0 };
   private gridSnapshot: Grid | null = null;
 
@@ -47,6 +54,9 @@ export class Editor {
   private editSnapshot: Grid | null = null; // grid state before editing began
   private editIsNew = false; // true if widget was just created (Escape removes it)
   private onRedrawCallback: (() => void) | null = null;
+
+  // Hover state
+  private hoveredWidget: Widget | null = null;
 
   // Double-click detection
   private lastClickTime = 0;
@@ -75,11 +85,12 @@ export class Editor {
     this.tool = tool;
     this.selection = null;
     this.selectedWidget = null;
+    this.selectedWidgets = [];
     this.updateStatus(0, 0);
     this.redraw();
   }
 
-  setGrid(grid: Grid): void {
+  setGrid(grid: Grid, resetHistory = true): void {
     if (this.isEditing) this.stopEditing(false);
     this.grid = grid;
     this.renderer.setGrid(grid);
@@ -87,10 +98,12 @@ export class Editor {
     this.reparse();
     this.selection = null;
     this.selectedWidget = null;
-    // Reset undo history when loading a new file
-    this.lastSavedState = grid.toString();
-    this.undoStack = [];
-    this.redoStack = [];
+    this.selectedWidgets = [];
+    if (resetHistory) {
+      this.lastSavedState = grid.toString();
+      this.undoStack = [];
+      this.redoStack = [];
+    }
     this.redraw();
   }
 
@@ -108,11 +121,38 @@ export class Editor {
   }
 
   redraw(): void {
+    let selections: Rect[] = this.selectedWidgets.length > 1
+      ? this.selectedWidgets.map(w => w.rect)
+      : this.selection ? [this.selection] : [];
+
+    // During group drag, offset all selection rects by the drag delta
+    const d = this.groupDragDelta;
+    if (d && selections.length > 1) {
+      selections = selections.map(r => ({
+        ...r,
+        col: r.col + d.col,
+        row: r.row + d.row,
+      }));
+    }
+
+    // Compute bounding box around multi-selection
+    let boundingBox: Rect | null = null;
+    if (selections.length > 1) {
+      const minCol = Math.min(...selections.map(r => r.col));
+      const minRow = Math.min(...selections.map(r => r.row));
+      const maxCol = Math.max(...selections.map(r => r.col + r.width));
+      const maxRow = Math.max(...selections.map(r => r.row + r.height));
+      boundingBox = { col: minCol, row: minRow, width: maxCol - minCol, height: maxRow - minRow };
+    }
+
     this.renderer.render(
-      this.selection,
-      this.isResizable && !this.isEditing,
+      selections,
+      this.isResizable && !this.isEditing && this.selectedWidgets.length <= 1,
       this.selectedLineDirection,
       this.getEditCursor(),
+      this.hoveredWidget?.rect ?? null,
+      this.marquee,
+      boundingBox,
     );
   }
 
@@ -122,6 +162,25 @@ export class Editor {
       this.tool,
       this.currentFile ?? "-"
     );
+  }
+
+  // --- Hover ---
+
+  onHover(px: number, py: number): void {
+    if (this.tool !== "select" || this.dragStart) return;
+    const { col, row } = this.renderer.pixelToGrid(px, py);
+    const hit = widgetAt(this.widgets, col, row);
+    if (hit !== this.hoveredWidget) {
+      this.hoveredWidget = hit;
+      this.redraw();
+    }
+  }
+
+  clearHover(): void {
+    if (this.hoveredWidget) {
+      this.hoveredWidget = null;
+      this.redraw();
+    }
   }
 
   // --- Mouse handlers ---
@@ -155,18 +214,33 @@ export class Editor {
     this.dragStart = { col, row };
     this.isDragging = false;
     this.isMoving = false;
+    this.isMovingGroup = false;
     this.isResizing = false;
+    this.isBoxSelecting = false;
+    this.marquee = null;
+    this.groupDragDelta = null;
     this.resizeHandle = null;
 
     if (this.tool === "select") {
-      // Check if clicking on a resize handle
-      if (this.selection && this.selectedWidget && this.isResizable) {
+      // Check if clicking on a resize handle (single selection only)
+      if (this.selection && this.selectedWidget && this.isResizable && this.selectedWidgets.length <= 1) {
         const handle = this.renderer.getHandleAt(px, py, this.selection, this.selectedLineDirection);
         if (handle) {
           this.isResizing = true;
           this.resizeHandle = handle;
           this.resizeAnchor = { ...this.selection };
           this.gridSnapshot = this.grid.clone();
+          return;
+        }
+      }
+
+      // Check if clicking inside a widget that's part of the multi-selection
+      if (this.selectedWidgets.length > 1) {
+        const hitInGroup = this.selectedWidgets.find(w => this.isInsideRect(col, row, w.rect));
+        if (hitInGroup) {
+          this.isMovingGroup = true;
+          this.gridSnapshot = this.grid.clone();
+          this.moveOffset = { col: col - this.dragStart.col, row: row - this.dragStart.row };
           return;
         }
       }
@@ -188,6 +262,7 @@ export class Editor {
       if (hit) {
         this.selection = { ...hit.rect };
         this.selectedWidget = hit;
+        this.selectedWidgets = [hit];
         this.isMoving = true;
         this.gridSnapshot = this.grid.clone();
         this.moveOffset = {
@@ -195,8 +270,11 @@ export class Editor {
           row: row - hit.rect.row,
         };
       } else {
+        // Click on empty space — start box select
         this.selection = null;
         this.selectedWidget = null;
+        this.selectedWidgets = [];
+        this.isBoxSelecting = true;
       }
       this.redraw();
     }
@@ -212,6 +290,12 @@ export class Editor {
     if (this.tool === "select" && this.isResizing && this.resizeAnchor && this.resizeHandle) {
       this.selection = this.computeResizedRect(this.resizeAnchor, this.resizeHandle, col, row);
       this.redraw();
+    } else if (this.tool === "select" && this.isMovingGroup && this.selectedWidgets.length > 1) {
+      this.groupDragDelta = {
+        col: col - this.dragStart.col,
+        row: row - this.dragStart.row,
+      };
+      this.redraw();
     } else if (this.tool === "select" && this.isMoving && this.selectedWidget && this.selection) {
       // Update selection preview to show where widget will land
       this.selection = {
@@ -219,6 +303,9 @@ export class Editor {
         col: col - this.moveOffset.col,
         row: row - this.moveOffset.row,
       };
+      this.redraw();
+    } else if (this.tool === "select" && this.isBoxSelecting && this.dragStart) {
+      this.marquee = this.dragToRect(this.dragStart, { col, row });
       this.redraw();
     } else if (this.tool === "box" || this.tool === "line") {
       const rect = this.dragToRect(this.dragStart, { col, row });
@@ -246,6 +333,20 @@ export class Editor {
       return;
     }
 
+    if (this.tool === "select" && this.isMovingGroup && this.selectedWidgets.length > 1 && this.dragStart) {
+      const deltaCol = col - this.dragStart.col;
+      const deltaRow = row - this.dragStart.row;
+      this.groupDragDelta = null;
+      if (deltaCol !== 0 || deltaRow !== 0) {
+        this.moveWidgets(this.selectedWidgets, deltaCol, deltaRow);
+      }
+      this.gridSnapshot = null;
+      this.dragStart = null;
+      this.isDragging = false;
+      this.isMovingGroup = false;
+      return;
+    }
+
     if (this.tool === "select" && this.isMoving && this.selectedWidget) {
       const newCol = col - this.moveOffset.col;
       const newRow = row - this.moveOffset.row;
@@ -256,6 +357,33 @@ export class Editor {
       this.dragStart = null;
       this.isDragging = false;
       this.isMoving = false;
+      return;
+    }
+
+    if (this.tool === "select" && this.isBoxSelecting) {
+      if (this.isDragging && this.dragStart) {
+        const marqueeRect = this.dragToRect(this.dragStart, { col, row });
+        const hits = this.widgetsOverlapping(this.widgets, marqueeRect);
+        if (hits.length > 0) {
+          this.selectedWidgets = hits;
+          this.selectedWidget = hits[0];
+          this.selection = hits.length === 1 ? { ...hits[0].rect } : null;
+        } else {
+          this.selectedWidgets = [];
+          this.selectedWidget = null;
+          this.selection = null;
+        }
+      } else {
+        // Plain click on empty space — clear selection
+        this.selectedWidgets = [];
+        this.selectedWidget = null;
+        this.selection = null;
+      }
+      this.marquee = null;
+      this.isBoxSelecting = false;
+      this.dragStart = null;
+      this.isDragging = false;
+      this.redraw();
       return;
     }
 
@@ -344,10 +472,14 @@ export class Editor {
     const oldRect = widget.rect;
     this.grid.clearRect(oldRect.col, oldRect.row, oldRect.width, oldRect.height);
 
-    // Re-render any widgets that were under the moved widget
-    const remaining = detectWidgets(this.grid);
-    for (const w of remaining) {
-      renderWidget(this.grid, w);
+    // Re-render overlapping widgets using snapshot data (not re-detected from
+    // the partially-cleared grid, which can mis-detect interior content as labels)
+    for (const w of snapshotWidgets) {
+      if (this.rectsEqual(w.rect, oldRect) && w.type === widget.type) continue;
+      if (children.includes(w)) continue;
+      if (this.rectsOverlap(w.rect, oldRect)) {
+        renderWidget(this.grid, w);
+      }
     }
 
     // Render the moved widget at its new position
@@ -373,6 +505,93 @@ export class Editor {
     this.reparse();
     this.selectedWidget = widgetAt(this.widgets, newCol, newRow) ?? moved;
     this.selection = { ...moved.rect };
+    this.gridSnapshot = null;
+    this.redraw();
+    this.save();
+  }
+
+  private moveWidgets(widgets: Widget[], deltaCol: number, deltaRow: number): void {
+    if (!this.gridSnapshot) return;
+
+    const snapshot = this.gridSnapshot;
+    const snapshotWidgets = detectWidgets(snapshot);
+
+    // Restore grid from snapshot
+    for (let r = 0; r < this.grid.height; r++) {
+      for (let c = 0; c < this.grid.width; c++) {
+        this.grid.set(c, r, snapshot.get(c, r));
+      }
+    }
+
+    // Collect all widgets to move (including children of boxes)
+    const toMove: Widget[] = [];
+    const toMoveSet = new Set<Widget>();
+    for (const w of widgets) {
+      if (toMoveSet.has(w)) continue;
+      toMove.push(w);
+      toMoveSet.add(w);
+      if (w.type === "box") {
+        for (const child of widgetsInside(snapshotWidgets, w.rect)) {
+          if (!toMoveSet.has(child)) {
+            toMove.push(child);
+            toMoveSet.add(child);
+          }
+        }
+      }
+    }
+
+    // Clear all original footprints and compute union of cleared area
+    let clearMinCol = Infinity, clearMinRow = Infinity;
+    let clearMaxCol = -Infinity, clearMaxRow = -Infinity;
+    for (const w of toMove) {
+      this.grid.clearRect(w.rect.col, w.rect.row, w.rect.width, w.rect.height);
+      clearMinCol = Math.min(clearMinCol, w.rect.col);
+      clearMinRow = Math.min(clearMinRow, w.rect.row);
+      clearMaxCol = Math.max(clearMaxCol, w.rect.col + w.rect.width);
+      clearMaxRow = Math.max(clearMaxRow, w.rect.row + w.rect.height);
+    }
+    const clearedArea: Rect = {
+      col: clearMinCol, row: clearMinRow,
+      width: clearMaxCol - clearMinCol, height: clearMaxRow - clearMinRow,
+    };
+
+    // Re-render overlapping widgets using snapshot data (not re-detected from
+    // the partially-cleared grid, which can mis-detect interior content as labels)
+    for (const w of snapshotWidgets) {
+      if (toMove.some(m => this.rectsEqual(m.rect, w.rect) && m.type === w.type)) continue;
+      if (this.rectsOverlap(w.rect, clearedArea)) {
+        renderWidget(this.grid, w);
+      }
+    }
+
+    // Render all moved widgets at new positions
+    const movedWidgets: Widget[] = [];
+    for (const w of toMove) {
+      const moved: Widget = {
+        ...w,
+        rect: {
+          ...w.rect,
+          col: w.rect.col + deltaCol,
+          row: w.rect.row + deltaRow,
+        },
+      } as Widget;
+      renderWidget(this.grid, moved);
+      movedWidgets.push(moved);
+    }
+
+    this.reparse();
+
+    // Update selection to the moved top-level widgets (not children)
+    this.selectedWidgets = [];
+    for (let i = 0; i < widgets.length; i++) {
+      const origRect = widgets[i].rect;
+      const newCol = origRect.col + deltaCol;
+      const newRow = origRect.row + deltaRow;
+      const found = widgetAt(this.widgets, newCol, newRow);
+      if (found) this.selectedWidgets.push(found);
+    }
+    this.selectedWidget = this.selectedWidgets[0] ?? null;
+    this.selection = this.selectedWidgets.length === 1 ? { ...this.selectedWidgets[0].rect } : null;
     this.gridSnapshot = null;
     this.redraw();
     this.save();
@@ -469,10 +688,14 @@ export class Editor {
     const oldRect = widget.rect;
     this.grid.clearRect(oldRect.col, oldRect.row, oldRect.width, oldRect.height);
 
-    // Re-render any widgets that were under the resized widget
-    const remaining = detectWidgets(this.grid);
-    for (const w of remaining) {
-      renderWidget(this.grid, w);
+    // Re-render overlapping widgets using snapshot data (not re-detected from
+    // the partially-cleared grid, which can mis-detect interior content as labels)
+    const snapshotWidgets = detectWidgets(snapshot);
+    for (const w of snapshotWidgets) {
+      if (this.rectsEqual(w.rect, oldRect) && w.type === widget.type) continue;
+      if (this.rectsOverlap(w.rect, oldRect)) {
+        renderWidget(this.grid, w);
+      }
     }
 
     // Build resized widget
@@ -490,7 +713,6 @@ export class Editor {
 
     // Re-render children that were inside the original box (keep absolute positions)
     if (widget.type === "box") {
-      const snapshotWidgets = detectWidgets(snapshot);
       const children = widgetsInside(snapshotWidgets, oldRect);
       for (const child of children) {
         // Only re-render if the child still fits inside the new rect
@@ -538,16 +760,37 @@ export class Editor {
   // --- Widget deletion ---
 
   deleteSelected(): void {
-    if (!this.selectedWidget || !this.selection) return;
-    const r = this.selectedWidget.rect;
-    this.grid.clearRect(r.col, r.row, r.width, r.height);
-    // Re-render widgets that were under the deleted one
-    this.reparse();
-    for (const w of this.widgets) {
-      renderWidget(this.grid, w);
+    const toDelete = this.selectedWidgets.length > 0
+      ? this.selectedWidgets
+      : this.selectedWidget ? [this.selectedWidget] : [];
+    if (toDelete.length === 0) return;
+
+    // Save widget data before clearing so we re-render from correct state
+    const preDeleteWidgets = [...this.widgets];
+
+    let clearMinCol = Infinity, clearMinRow = Infinity;
+    let clearMaxCol = -Infinity, clearMaxRow = -Infinity;
+    for (const w of toDelete) {
+      this.grid.clearRect(w.rect.col, w.rect.row, w.rect.width, w.rect.height);
+      clearMinCol = Math.min(clearMinCol, w.rect.col);
+      clearMinRow = Math.min(clearMinRow, w.rect.row);
+      clearMaxCol = Math.max(clearMaxCol, w.rect.col + w.rect.width);
+      clearMaxRow = Math.max(clearMaxRow, w.rect.row + w.rect.height);
+    }
+    const clearedArea: Rect = {
+      col: clearMinCol, row: clearMinRow,
+      width: clearMaxCol - clearMinCol, height: clearMaxRow - clearMinRow,
+    };
+    // Re-render overlapping widgets using pre-delete data
+    for (const w of preDeleteWidgets) {
+      if (toDelete.includes(w)) continue;
+      if (this.rectsOverlap(w.rect, clearedArea)) {
+        renderWidget(this.grid, w);
+      }
     }
     this.selection = null;
     this.selectedWidget = null;
+    this.selectedWidgets = [];
     this.reparse();
     this.redraw();
     this.save();
@@ -558,6 +801,7 @@ export class Editor {
     this.widgets = [];
     this.selection = null;
     this.selectedWidget = null;
+    this.selectedWidgets = [];
     this.redraw();
     this.save();
   }
@@ -565,13 +809,19 @@ export class Editor {
   // --- Nudge & directional selection ---
 
   nudgeSelected(direction: "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight"): void {
-    if (!this.selectedWidget) return;
     const delta = { col: 0, row: 0 };
     if (direction === "ArrowUp") delta.row = -1;
     else if (direction === "ArrowDown") delta.row = 1;
     else if (direction === "ArrowLeft") delta.col = -1;
     else if (direction === "ArrowRight") delta.col = 1;
 
+    if (this.selectedWidgets.length > 1) {
+      this.gridSnapshot = this.grid.clone();
+      this.moveWidgets(this.selectedWidgets, delta.col, delta.row);
+      return;
+    }
+
+    if (!this.selectedWidget) return;
     const newCol = this.selectedWidget.rect.col + delta.col;
     const newRow = this.selectedWidget.rect.row + delta.row;
     this.gridSnapshot = this.grid.clone();
@@ -674,6 +924,7 @@ export class Editor {
     this.reparse();
     this.selection = null;
     this.selectedWidget = null;
+    this.selectedWidgets = [];
     this.redraw();
     // Persist to server without pushing onto the undo stack
     if (this.currentFile) {
@@ -694,6 +945,12 @@ export class Editor {
     if (!this.selectedWidget) return;
     const w = this.selectedWidget;
     if (w.type !== "button" && w.type !== "text" && w.type !== "box") return;
+
+    // Only allow editing empty boxes (no child widgets inside)
+    if (w.type === "box" && !isNew) {
+      const children = widgetsInside(this.widgets, w.rect);
+      if (children.length > 0) return;
+    }
 
     this.isEditing = true;
     this.editIsNew = isNew;
@@ -910,7 +1167,7 @@ export class Editor {
 
   getCursor(px: number, py: number): string {
     if (this.tool !== "select") return "crosshair";
-    if (this.selection && this.selectedWidget && this.isResizable) {
+    if (this.selection && this.selectedWidget && this.isResizable && this.selectedWidgets.length <= 1) {
       const handle = this.renderer.getHandleAt(px, py, this.selection, this.selectedLineDirection);
       if (handle) {
         if (this.selectedLineDirection === "horizontal") return "ew-resize";
@@ -924,8 +1181,14 @@ export class Editor {
         return cursors[handle];
       }
     }
+    const { col, row } = this.renderer.pixelToGrid(px, py);
+    // Multi-selection: show move cursor over any selected widget
+    if (this.selectedWidgets.length > 1) {
+      if (this.selectedWidgets.some(w => this.isInsideRect(col, row, w.rect))) {
+        return "move";
+      }
+    }
     if (this.selection) {
-      const { col, row } = this.renderer.pixelToGrid(px, py);
       if (this.isInsideRect(col, row, this.selection)) {
         return "move";
       }
@@ -948,5 +1211,22 @@ export class Editor {
     const width = Math.abs(end.col - start.col) + 1;
     const height = Math.abs(end.row - start.row) + 1;
     return { col, row, width, height };
+  }
+
+  private rectsEqual(a: Rect, b: Rect): boolean {
+    return a.col === b.col && a.row === b.row && a.width === b.width && a.height === b.height;
+  }
+
+  private rectsOverlap(a: Rect, b: Rect): boolean {
+    return (
+      a.col < b.col + b.width &&
+      a.col + a.width > b.col &&
+      a.row < b.row + b.height &&
+      a.row + a.height > b.row
+    );
+  }
+
+  private widgetsOverlapping(widgets: Widget[], rect: Rect): Widget[] {
+    return widgets.filter((w) => this.rectsOverlap(w.rect, rect));
   }
 }

@@ -69,7 +69,8 @@ export function App() {
         if (editorRef.current?.isEditing) return;
         readFile(msg.name).then((content) => {
           const grid = Grid.fromString(content, DEFAULT_WIDTH, DEFAULT_HEIGHT);
-          editorRef.current!.setGrid(grid);
+          // Reload grid but preserve undo history (this is the same file)
+          editorRef.current!.setGrid(grid, false);
         });
       } else if (msg.type === "ai-status" && msg.name === editorRef.current?.currentFile) {
         if (msg.status === "working") {
@@ -108,15 +109,15 @@ export function App() {
         return;
       }
 
-      // Delete selected widget
-      if ((e.key === "Delete" || e.key === "Backspace") && editor?.selectedWidget) {
+      // Delete selected widget(s)
+      if ((e.key === "Delete" || e.key === "Backspace") && (editor?.selectedWidget || editor?.selectedWidgets.length)) {
         e.preventDefault();
         editor.deleteSelected();
         return;
       }
 
-      // Shift+Arrow: nudge selected widget
-      if (e.shiftKey && e.key.startsWith("Arrow") && editor?.selectedWidget) {
+      // Shift+Arrow: nudge selected widget(s)
+      if (e.shiftKey && e.key.startsWith("Arrow") && (editor?.selectedWidget || editor?.selectedWidgets.length)) {
         e.preventDefault();
         editor.nudgeSelected(e.key as "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight");
         return;
@@ -130,7 +131,7 @@ export function App() {
       }
 
       // Undo/redo
-      if ((e.metaKey || e.ctrlKey) && e.key === "z") {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         if (e.shiftKey) {
           editor?.redo();
@@ -165,7 +166,11 @@ export function App() {
   const onCanvasHover = useCallback((e: React.MouseEvent) => {
     if (canvasRef.current && editorRef.current) {
       canvasRef.current.style.cursor = editorRef.current.getCursor(e.clientX, e.clientY);
+      editorRef.current.onHover(e.clientX, e.clientY);
     }
+  }, []);
+  const onCanvasLeave = useCallback(() => {
+    editorRef.current?.clearHover();
   }, []);
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     editorRef.current?.onMouseDown(e.clientX, e.clientY);
@@ -217,6 +222,7 @@ export function App() {
         ref={canvasRef}
         onMouseDown={onMouseDown}
         onMouseMove={onCanvasHover}
+        onMouseLeave={onCanvasLeave}
       />
       <div className="overlay">
         <Select
