@@ -20,35 +20,55 @@ async function getBaseUrl(): Promise<string> {
 
 export async function listFiles(): Promise<string[]> {
   const base = await getBaseUrl();
-  const res = await fetch(`${base}/files`);
-  return res.json();
+  try {
+    const res = await fetch(`${base}/files`);
+    return res.json();
+  } catch (e) {
+    _baseUrl = null;
+    throw e;
+  }
 }
 
 export async function readFile(name: string): Promise<string> {
   const base = await getBaseUrl();
-  const res = await fetch(`${base}/file/${encodeURIComponent(name)}`);
-  if (!res.ok) throw new Error(`Failed to read ${name}: ${res.status}`);
-  return res.text();
+  try {
+    const res = await fetch(`${base}/file/${encodeURIComponent(name)}`);
+    if (!res.ok) throw new Error(`Failed to read ${name}: ${res.status}`);
+    return res.text();
+  } catch (e) {
+    _baseUrl = null;
+    throw e;
+  }
 }
 
 export async function writeFile(name: string, content: string): Promise<void> {
   const base = await getBaseUrl();
-  const res = await fetch(`${base}/file/${encodeURIComponent(name)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "text/plain" },
-    body: content,
-  });
-  if (!res.ok) throw new Error(`Failed to write ${name}: ${res.status}`);
+  try {
+    const res = await fetch(`${base}/file/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "text/plain" },
+      body: content,
+    });
+    if (!res.ok) throw new Error(`Failed to write ${name}: ${res.status}`);
+  } catch (e) {
+    _baseUrl = null; // Re-discover port on next call
+    throw e;
+  }
 }
 
 export async function triggerAi(name: string, instruction = "repair", userMessage = ""): Promise<void> {
   const base = await getBaseUrl();
-  const res = await fetch(`${base}/ai/${encodeURIComponent(name)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ instruction, userMessage }),
-  });
-  if (!res.ok) throw new Error(`Failed to trigger AI on ${name}: ${res.status}`);
+  try {
+    const res = await fetch(`${base}/ai/${encodeURIComponent(name)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instruction, userMessage }),
+    });
+    if (!res.ok) throw new Error(`Failed to trigger AI on ${name}: ${res.status}`);
+  } catch (e) {
+    _baseUrl = null;
+    throw e;
+  }
 }
 
 export type WsMessage =

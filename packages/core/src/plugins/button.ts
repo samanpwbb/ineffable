@@ -66,7 +66,6 @@ function traceButton(grid: Grid, startCol: number, startRow: number): ButtonWidg
   while (c < grid.width) {
     if (grid.get(c, startRow) === " " && grid.get(c + 1, startRow) === "]") {
       const trimmed = label.trim();
-      if (trimmed.length === 0) return null;
       const width = c + 2 - startCol;
       return {
         type: "button",

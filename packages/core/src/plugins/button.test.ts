@@ -101,13 +101,13 @@ describe("button edge cases", () => {
     expect(buttons(w)).toHaveLength(0);
   });
 
-  it("D4: empty button label → not detected", () => {
+  it("D4: empty button label → detected with empty label", () => {
     const g = gridFrom`
       [    ]
     `;
     const w = detectWidgets(g);
-    // "[ " starts, then it finds "  ]" but label after trim is empty
-    expect(buttons(w)).toHaveLength(0);
+    expect(buttons(w)).toHaveLength(1);
+    expect(buttons(w)[0].label).toBe("");
   });
 
   it("D5: button inside a box is detected", () => {

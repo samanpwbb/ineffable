@@ -56,6 +56,9 @@ export interface ServerOptions {
 export function startServer(options: ServerOptions): void {
   const PREFERRED_PORT = options.port ?? (Number(process.env.PORT) || 3001);
 
+  // Remove stale port file so the dev client doesn't connect to a wrong server
+  try { fs.unlinkSync(PORT_FILE); } catch {}
+
   // Validate target directory
   const rawDir = path.resolve(options.targetDir);
   if (!fs.existsSync(rawDir)) {
@@ -319,9 +322,16 @@ export function startServer(options: ServerOptions): void {
 
   function startListening(port: number): void {
     fs.writeFileSync(PORT_FILE, String(port), "utf-8");
-    console.log(`Ineffable server running on http://localhost:${port}`);
-    console.log(`Serving diagrams from: ${DIAGRAMS_DIR}`);
+    console.log(`\nIneffable running at http://localhost:${port}\n`);
+    console.log(`Diagrams: ${DIAGRAMS_DIR}`);
   }
+
+  // Clean up port file on exit so dev clients don't connect to a stale port
+  function removePortFile(): void {
+    try { fs.unlinkSync(PORT_FILE); } catch {}
+  }
+  process.on("SIGINT", () => { removePortFile(); process.exit(0); });
+  process.on("SIGTERM", () => { removePortFile(); process.exit(0); });
 
   // Suppress WSS errors (they mirror the HTTP server errors)
   wss.on("error", () => {});
