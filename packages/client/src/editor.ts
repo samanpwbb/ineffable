@@ -236,7 +236,7 @@ export class Editor {
 
   // --- Mouse handlers ---
 
-  onMouseDown(px: number, py: number): void {
+  onMouseDown(px: number, py: number, shiftKey = false): void {
     if (this.isEditing) {
       this.stopEditing();
     }
@@ -282,6 +282,12 @@ export class Editor {
       if (this.selectedWidgets.length > 1) {
         const hitInGroup = this.selectedWidgets.find(w => this.isInsideRect(col, row, w.rect));
         if (hitInGroup) {
+          if (shiftKey) {
+            // Shift+click on selected widget — deselect it
+            this.selectedWidgets = this.selectedWidgets.filter(w => w !== hitInGroup);
+            this.redraw();
+            return;
+          }
           this.interaction = {
             type: "movingGroup", start, snapshot: this.grid.clone(),
             delta: { col: 0, row: 0 },
@@ -292,6 +298,12 @@ export class Editor {
 
       // Check click inside current selection (start move)
       if (selRect && this.selectedWidget && this.isInsideRect(col, row, selRect)) {
+        if (shiftKey) {
+          // Shift+click on the single selected widget — deselect it
+          this.selectedWidgets = [];
+          this.redraw();
+          return;
+        }
         this.interaction = {
           type: "moving", start, widget: this.selectedWidget,
           offset: { col: col - selRect.col, row: row - selRect.row },
@@ -318,15 +330,23 @@ export class Editor {
       // Click on a widget — select + prepare move
       const hit = widgetAt(this.widgets, col, row);
       if (hit) {
-        this.selectedWidgets = [hit];
-        this.interaction = {
-          type: "moving", start, widget: hit,
-          offset: { col: col - hit.rect.col, row: row - hit.rect.row },
-          snapshot: this.grid.clone(), preview: { ...hit.rect },
-        };
+        if (shiftKey) {
+          // Shift+click — add to selection
+          this.selectedWidgets = [...this.selectedWidgets, hit];
+          this.redraw();
+        } else {
+          this.selectedWidgets = [hit];
+          this.interaction = {
+            type: "moving", start, widget: hit,
+            offset: { col: col - hit.rect.col, row: row - hit.rect.row },
+            snapshot: this.grid.clone(), preview: { ...hit.rect },
+          };
+        }
       } else {
         // Empty space — start box select
-        this.selectedWidgets = [];
+        if (!shiftKey) {
+          this.selectedWidgets = [];
+        }
         this.interaction = { type: "boxSelecting", start, marquee: null };
       }
       this.redraw();

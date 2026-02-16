@@ -174,7 +174,7 @@ export function App() {
     editorRef.current?.clearHover();
   }, []);
   const onMouseDown = useCallback((e: React.MouseEvent) => {
-    editorRef.current?.onMouseDown(e.clientX, e.clientY);
+    editorRef.current?.onMouseDown(e.clientX, e.clientY, e.shiftKey);
     document.addEventListener("mousemove", onMouseMove);
     document.addEventListener("mouseup", onMouseUp);
   }, [onMouseMove, onMouseUp]);
