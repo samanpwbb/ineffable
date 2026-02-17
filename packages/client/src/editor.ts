@@ -256,7 +256,7 @@ export class Editor {
 
     if (isDoubleClick && this.tool === "select" && this.selectedWidget) {
       const t = this.selectedWidget.type;
-      if (t === "button" || t === "text" || t === "box") {
+      if (t === "button" || t === "text") {
         this.startEditing(false);
         return;
       }
@@ -915,12 +915,7 @@ export class Editor {
   startEditing(isNew: boolean): void {
     if (!this.selectedWidget) return;
     const w = this.selectedWidget;
-    if (w.type !== "button" && w.type !== "text" && w.type !== "box") return;
-
-    if (w.type === "box" && !isNew) {
-      const children = widgetsInside(this.widgets, w.rect);
-      if (children.length > 0) return;
-    }
+    if (w.type !== "button" && w.type !== "text") return;
 
     this.editSession = new EditSession(w, isNew, () => {
       this.redraw();
@@ -993,10 +988,6 @@ export class Editor {
         renderWidget(this.grid, updated);
         this.selectedWidgets = [updated];
       }
-    } else if (w.type === "box") {
-      const updated: Widget = { type: "box", label: session.buffer || undefined, rect: w.rect };
-      renderWidget(this.grid, updated);
-      this.selectedWidgets = [updated];
     } else if (w.type === "text") {
       const newWidth = Math.max(1, session.buffer.length);
       const newRect = { ...w.rect, width: newWidth };

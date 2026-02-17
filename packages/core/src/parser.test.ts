@@ -65,7 +65,7 @@ describe("multi-widget combinations", () => {
     expect(boxes(w)).toHaveLength(2);
   });
 
-  it("B5: box containing a button → box has no label", () => {
+  it("B5: box containing a button", () => {
     const g = gridFrom`
       ┌────────────┐
       │            │
@@ -76,11 +76,6 @@ describe("multi-widget combinations", () => {
     const w = detectWidgets(g);
     expect(boxes(w)).toHaveLength(1);
     expect(buttons(w)).toHaveLength(1);
-    // The button row has content, but the box also has the button row as text.
-    // Since there's exactly one row with content, the box might detect it as label.
-    // But the button characters are what's there, not plain text.
-    // Current behavior: the box WILL detect a "label" since it sees non-space content on one row.
-    // This is a known ambiguity — documenting the current behavior.
   });
 
   it("B6: box interior with horizontal line", () => {
@@ -144,10 +139,9 @@ describe("priority and claiming", () => {
     expect(lines(w)).toHaveLength(0);
   });
 
-  it("H2: box interior label is ALSO detected as text (current behavior)", () => {
-    // The current parser only claims box BORDER cells, not interior.
-    // So the interior label text is also detected as a separate text widget.
-    // This is intentional: box interiors can contain child widgets.
+  it("H2: box interior text detected as text widget", () => {
+    // The parser only claims box BORDER cells, not interior.
+    // So interior text is detected as a separate text widget.
     const g = gridFrom`
       ┌────────┐
       │ Title  │
@@ -155,8 +149,6 @@ describe("priority and claiming", () => {
     `;
     const w = detectWidgets(g);
     expect(boxes(w)).toHaveLength(1);
-    expect(boxes(w)[0].label).toBe("Title");
-    // "Title" also appears as a text widget (unclaimed interior)
     expect(texts(w)).toHaveLength(1);
     expect(texts(w)[0].content).toBe("Title");
   });
@@ -170,7 +162,6 @@ describe("priority and claiming", () => {
     `;
     const w = detectWidgets(g);
     expect(boxes(w)).toHaveLength(1);
-    expect(boxes(w)[0].label).toBe("Box");
     expect(buttons(w)).toHaveLength(1);
     expect(buttons(w)[0].label).toBe("OK");
     expect(lines(w)).toHaveLength(1);
@@ -209,7 +200,7 @@ describe("priority and claiming", () => {
 describe("complex round-trips", () => {
   it("I7: complex diagram round-trip", () => {
     const originals: Widget[] = [
-      { type: "box", label: "Header", rect: { col: 0, row: 0, width: 12, height: 5 } },
+      { type: "box", rect: { col: 0, row: 0, width: 12, height: 5 } },
       { type: "button", label: "OK", rect: { col: 14, row: 0, width: 6, height: 1 } },
       { type: "line", direction: "horizontal", rect: { col: 0, row: 6, width: 20, height: 1 } },
       { type: "text", content: "Footer", rect: { col: 0, row: 8, width: 6, height: 1 } },
@@ -220,14 +211,11 @@ describe("complex round-trips", () => {
     }
     const detected = detectWidgets(g);
     expect(boxes(detected)).toHaveLength(1);
-    expect(boxes(detected)[0].label).toBe("Header");
     expect(buttons(detected)).toHaveLength(1);
     expect(buttons(detected)[0].label).toBe("OK");
     expect(lines(detected)).toHaveLength(1);
-    // "Footer" + "Header" (unclaimed box interior label)
-    expect(texts(detected)).toHaveLength(2);
-    expect(texts(detected).some((t) => t.content === "Footer")).toBe(true);
-    expect(texts(detected).some((t) => t.content === "Header")).toBe(true);
+    expect(texts(detected)).toHaveLength(1);
+    expect(texts(detected)[0].content).toBe("Footer");
   });
 });
 

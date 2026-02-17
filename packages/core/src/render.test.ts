@@ -22,18 +22,6 @@ describe("renderWidget", () => {
       expect(g.get(2, 2)).toBe(BOX_CHARS.bottomRight);
     });
 
-    it("renders a box with a centered label", () => {
-      const g = new Grid(10, 5);
-      renderWidget(g, {
-        type: "box",
-        label: "Hi",
-        rect: { col: 0, row: 0, width: 8, height: 5 },
-      });
-      // Label "Hi" centered on row 2 (midpoint of height 5)
-      // Inner width = 6, pad = floor((6-2)/2) = 2
-      expect(g.get(3, 2)).toBe("H");
-      expect(g.get(4, 2)).toBe("i");
-    });
   });
 
   describe("button", () => {

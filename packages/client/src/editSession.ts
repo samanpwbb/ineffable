@@ -23,8 +23,6 @@ export class EditSession {
       this.buffer = "";
     } else if (widget.type === "button") {
       this.buffer = widget.label;
-    } else if (widget.type === "box") {
-      this.buffer = widget.label ?? "";
     } else if (widget.type === "text") {
       this.buffer = widget.content;
     } else {
@@ -103,11 +101,6 @@ export class EditSession {
       const innerWidth = widget.rect.width - 4;
       const padLeft = Math.floor((innerWidth - this.buffer.length) / 2);
       col = widget.rect.col + 2 + padLeft + this.cursorPos;
-    } else if (widget.type === "box") {
-      const innerWidth = widget.rect.width - 2;
-      const padLeft = Math.floor((innerWidth - this.buffer.length) / 2);
-      col = widget.rect.col + 1 + padLeft + this.cursorPos;
-      row = widget.rect.row + Math.floor(widget.rect.height / 2);
     } else {
       col = widget.rect.col + this.cursorPos;
     }

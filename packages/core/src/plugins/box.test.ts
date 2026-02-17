@@ -28,7 +28,6 @@ describe("box detection", () => {
     const w = detectWidgets(g);
     expect(boxes(w)).toHaveLength(1);
     expect(boxes(w)[0].rect).toEqual({ col: 0, row: 0, width: 3, height: 3 });
-    expect(boxes(w)[0].label).toBeUndefined();
   });
 
   it("A2: detects larger box with correct dimensions", () => {
@@ -44,7 +43,7 @@ describe("box detection", () => {
     expect(boxes(w)[0].rect).toEqual({ col: 0, row: 0, width: 10, height: 5 });
   });
 
-  it("A3: detects box with centered label", () => {
+  it("A3: detects box with interior text (no label extraction)", () => {
     const g = gridFrom`
       ┌──────────┐
       │          │
@@ -54,10 +53,9 @@ describe("box detection", () => {
     `;
     const w = detectWidgets(g);
     expect(boxes(w)).toHaveLength(1);
-    expect(boxes(w)[0].label).toBe("Header");
   });
 
-  it("A4: box without label has undefined label", () => {
+  it("A4: empty box", () => {
     const g = gridFrom`
       ┌────┐
       │    │
@@ -66,7 +64,6 @@ describe("box detection", () => {
     `;
     const w = detectWidgets(g);
     expect(boxes(w)).toHaveLength(1);
-    expect(boxes(w)[0].label).toBeUndefined();
   });
 
   it("A5: box at grid origin (0,0)", () => {
@@ -116,21 +113,21 @@ describe("box detection", () => {
     expect(boxes(w)[0].rect.height).toBe(3);
   });
 
-  it("A9: box with single-char label", () => {
+  it("A9: box with single-char interior text", () => {
     const g = gridFrom`
       ┌───┐
       │ X │
       └───┘
     `;
     const w = detectWidgets(g);
-    expect(boxes(w)[0].label).toBe("X");
+    expect(boxes(w)).toHaveLength(1);
   });
 });
 
 // ─── B: Box Edge Cases (single-widget) ─────────────────────────────────────
 
 describe("box edge cases", () => {
-  it("B1: multi-row interior text → no label", () => {
+  it("B1: multi-row interior text", () => {
     const g = gridFrom`
       ┌──────┐
       │ Line1│
@@ -139,7 +136,6 @@ describe("box edge cases", () => {
     `;
     const w = detectWidgets(g);
     expect(boxes(w)).toHaveLength(1);
-    expect(boxes(w)[0].label).toBeUndefined();
   });
 });
 
@@ -157,13 +153,11 @@ describe("box round-trips", () => {
     const b = boxes(w);
     expect(b).toHaveLength(1);
     expect(b[0].rect).toEqual(original.rect);
-    expect(b[0].label).toBeUndefined();
   });
 
-  it("I2: labeled box round-trip", () => {
+  it("I2: large box round-trip", () => {
     const original: BoxWidget = {
       type: "box",
-      label: "Test",
       rect: { col: 0, row: 0, width: 10, height: 5 },
     };
     const g = new Grid(20, 10);
@@ -172,7 +166,6 @@ describe("box round-trips", () => {
     const b = boxes(w);
     expect(b).toHaveLength(1);
     expect(b[0].rect).toEqual(original.rect);
-    expect(b[0].label).toBe("Test");
   });
 });
 

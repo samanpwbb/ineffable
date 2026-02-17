@@ -26,14 +26,13 @@ REMIX this diagram.
 Produce a completely new layout that preserves ALL existing content but rearranges it.
 
 What "preserve content" means:
-- Every box label that exists must appear in the output (same text, not reworded)
 - Every button label that exists must appear in the output (same text, not reworded)
 - Every text widget that exists must appear in the output (same text, not reworded)
 - The total number of boxes, buttons, text widgets, and lines should stay the same
 
 What "new layout" means:
 - Change the positions of widgets — move things to different rows and columns
-- Change box sizes (wider, taller, narrower, shorter) as long as labels still fit
+- Change box sizes (wider, taller, narrower, shorter)
 - Change grouping — nest widgets inside boxes that previously were outside, or vice versa
 - Change alignment — if things were stacked vertically, try horizontal, or a grid
 - Change spacing between widgets
@@ -54,7 +53,7 @@ How to analyze:
 - Look for incomplete structures (e.g., a header and content area but no footer — add the footer)
 - Look for asymmetry that suggests missing pieces (e.g., three buttons in a row with space for a fourth)
 - Look for conventional UI patterns (e.g., a login form missing a submit button, a nav bar missing expected items)
-- Infer intent from labels and layout (e.g., a "Settings" box with only one option probably needs more)
+- Infer intent from text and layout (e.g., a "Settings" box with only one option probably needs more)
 
 Rules for prediction:
 - Preserve everything that already exists — do not move, resize, or restyle existing widgets

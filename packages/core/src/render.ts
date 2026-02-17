@@ -11,7 +11,7 @@ import { Widget, BOX_CHARS, LINE_CHARS } from "./patterns.js";
 export function renderWidget(grid: Grid, widget: Widget): void {
   switch (widget.type) {
     case "box":
-      renderBox(grid, widget.rect.col, widget.rect.row, widget.rect.width, widget.rect.height, widget.label);
+      renderBox(grid, widget.rect.col, widget.rect.row, widget.rect.width, widget.rect.height);
       break;
     case "button":
       renderButton(grid, widget.rect.col, widget.rect.row, widget.label, widget.rect.width);
@@ -25,7 +25,7 @@ export function renderWidget(grid: Grid, widget: Widget): void {
   }
 }
 
-function renderBox(grid: Grid, col: number, row: number, width: number, height: number, label?: string): void {
+function renderBox(grid: Grid, col: number, row: number, width: number, height: number): void {
   // Corners
   grid.set(col, row, BOX_CHARS.topLeft);
   grid.set(col + width - 1, row, BOX_CHARS.topRight);
@@ -42,14 +42,6 @@ function renderBox(grid: Grid, col: number, row: number, width: number, height: 
   for (let r = row + 1; r < row + height - 1; r++) {
     grid.set(col, r, BOX_CHARS.vertical);
     grid.set(col + width - 1, r, BOX_CHARS.vertical);
-  }
-
-  // Centered label
-  if (label) {
-    const innerWidth = width - 2;
-    const midRow = row + Math.floor(height / 2);
-    const padLeft = Math.floor((innerWidth - label.length) / 2);
-    grid.writeString(col + 1 + padLeft, midRow, label);
   }
 }
 

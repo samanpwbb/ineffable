@@ -42,7 +42,6 @@ export interface Rect {
 
 export interface BoxWidget {
   type: "box";
-  label?: string;
   rect: Rect;
 }
 

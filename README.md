@@ -57,7 +57,7 @@ Click a widget to select it. Click and drag on empty canvas space to box-select 
 
 ### Editing widgets
 
-Double-click a text, button, or box widget to edit its label inline. Press **Enter** to save or **Escape** to cancel.
+Double-click a text or button widget to edit its content inline. Press **Enter** to save or **Escape** to cancel.
 
 ### Moving and resizing
 
