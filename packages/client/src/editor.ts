@@ -298,6 +298,18 @@ export class Editor {
 
       // Check click inside current selection (start move)
       if (selRect && this.selectedWidget && this.isInsideRect(col, row, selRect)) {
+        // If there's a smaller child widget at this position, select it instead
+        const inner = widgetAt(this.widgets, col, row);
+        if (inner && inner !== this.selectedWidget) {
+          this.selectedWidgets = [inner];
+          this.interaction = {
+            type: "moving", start, widget: inner,
+            offset: { col: col - inner.rect.col, row: row - inner.rect.row },
+            snapshot: this.grid.clone(), preview: { ...inner.rect },
+          };
+          this.redraw();
+          return;
+        }
         if (shiftKey) {
           // Shift+click on the single selected widget — deselect it
           this.selectedWidgets = [];
@@ -409,7 +421,6 @@ export class Editor {
   onMouseUp(px: number, py: number): void {
     const { col, row } = this.renderer.pixelToGrid(px, py);
     const ix = this.interaction;
-
     switch (ix.type) {
       case "resizing": {
         const newRect = this.computeResizedRect(ix.anchor, ix.handle, col, row);
@@ -500,11 +511,15 @@ export class Editor {
           this.tool = "select";
           this.startEditing(true);
         } else if (this.tool === "text" && !hasDragged) {
-          this.placeWidget({
+          const textWidget: Widget = {
             type: "text", content: "",
             rect: { col, row, width: 1, height: 1 },
-          }, true);
+          };
+          renderWidget(this.grid, textWidget);
+          this.reparse();
+          this.selectedWidgets = [textWidget];
           this.tool = "select";
+          this.redraw();
           this.startEditing(true);
         }
         return;
