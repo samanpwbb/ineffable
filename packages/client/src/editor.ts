@@ -71,14 +71,17 @@ export class Editor {
 
   // Callbacks
   private onStatusUpdate: (pos: string, tool: string, file: string) => void;
+  private onSave?: (content: string) => void | Promise<void>;
 
   constructor(
     private renderer: CanvasRenderer,
     grid: Grid,
-    onStatusUpdate: (pos: string, tool: string, file: string) => void
+    onStatusUpdate: (pos: string, tool: string, file: string) => void,
+    onSave?: (content: string) => void | Promise<void>,
   ) {
     this.grid = grid;
     this.onStatusUpdate = onStatusUpdate;
+    this.onSave = onSave;
     this.reparse();
   }
 
@@ -767,12 +770,12 @@ export class Editor {
   }
 
   async save(): Promise<void> {
-    if (!this.currentFile) return;
-    this.history.push(this.grid.toString());
-    try {
-      await writeFile(this.currentFile, this.grid.toString());
-    } catch (e) {
-      console.error("Failed to save:", e);
+    const content = this.grid.toString();
+    this.history.push(content);
+    if (this.onSave) {
+      try { await this.onSave(content); } catch (e) { console.error("Failed to save:", e); }
+    } else if (this.currentFile) {
+      try { await writeFile(this.currentFile, content); } catch (e) { console.error("Failed to save:", e); }
     }
   }
 
@@ -914,10 +917,10 @@ export class Editor {
     this.reparse();
     this.selectedWidgets = [];
     this.redraw();
-    if (this.currentFile) {
-      writeFile(this.currentFile, state).catch((e) =>
-        console.error("Failed to save:", e)
-      );
+    if (this.onSave) {
+      Promise.resolve(this.onSave(state)).catch((e) => console.error("Failed to save:", e));
+    } else if (this.currentFile) {
+      writeFile(this.currentFile, state).catch((e) => console.error("Failed to save:", e));
     }
   }
 

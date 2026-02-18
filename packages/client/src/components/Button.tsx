@@ -1,4 +1,3 @@
-import { Button as BaseButton } from "@base-ui/react/button";
 import React from "react";
 
 interface ButtonProps {
@@ -10,12 +9,12 @@ interface ButtonProps {
 
 export function Button({ children, onClick, disabled, className }: ButtonProps) {
   return (
-    <BaseButton
+    <button
       className={`btn${className ? ` ${className}` : ""}`}
       onClick={onClick}
       disabled={disabled}
     >
       {children}
-    </BaseButton>
+    </button>
   );
 }

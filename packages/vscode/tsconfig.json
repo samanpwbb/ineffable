@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "types": ["node"]
+  },
+  "include": ["src/extension.ts", "src/hook.ts"],
+  "exclude": ["src/webview"]
+}
