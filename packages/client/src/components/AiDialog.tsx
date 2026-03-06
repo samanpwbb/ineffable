@@ -1,5 +1,4 @@
-import { Dialog } from "@base-ui/react/dialog";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 export type AiAction = "repair" | "remix" | "predict";
 
@@ -17,58 +16,77 @@ const placeholders: Record<AiAction, string> = {
 
 export function AiDialog({ action, onSubmit, onCancel }: AiDialogProps) {
   const [message, setMessage] = useState("");
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    if (action !== null) setMessage("");
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+
+    if (action !== null) {
+      setMessage("");
+      if (!dialog.open) dialog.showModal();
+      // Focus textarea after modal opens
+      setTimeout(() => textareaRef.current?.focus(), 0);
+    } else {
+      if (dialog.open) dialog.close();
+    }
   }, [action]);
 
-  const open = action !== null;
+  // Handle backdrop click and Escape key
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+
+    const handleClick = (e: MouseEvent) => {
+      if (e.target === dialog) onCancel();
+    };
+    const handleCancel = (e: Event) => {
+      e.preventDefault();
+      onCancel();
+    };
+
+    dialog.addEventListener("click", handleClick);
+    dialog.addEventListener("cancel", handleCancel);
+    return () => {
+      dialog.removeEventListener("click", handleClick);
+      dialog.removeEventListener("cancel", handleCancel);
+    };
+  }, [onCancel]);
 
   return (
-    <Dialog.Root
-      open={open}
-      onOpenChange={(isOpen) => {
-        if (!isOpen) onCancel();
-      }}
-      modal
-    >
-      <Dialog.Portal>
-        <Dialog.Backdrop className="ai-dialog-backdrop" />
-        <Dialog.Popup className="ai-dialog-popup">
-          <Dialog.Title className="ai-dialog-title">
-            {action ? action.charAt(0).toUpperCase() + action.slice(1) : ""}
-          </Dialog.Title>
-          <Dialog.Description className="ai-dialog-description">
-            Optional: add instructions for the AI.
-          </Dialog.Description>
-          <textarea
-            className="ai-dialog-textarea"
-            placeholder={action ? placeholders[action] : ""}
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            rows={3}
-            autoFocus
-          />
-          <div className="ai-dialog-actions">
-            <button
-              className="btn"
-              onClick={onCancel}
-            >
-              Cancel
-            </button>
-            <button
-              className="btn ai-dialog-submit"
-              onClick={() => {
-                if (action) {
-                  onSubmit(action, message.trim());
-                }
-              }}
-            >
-              Submit
-            </button>
-          </div>
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <dialog ref={dialogRef} className="ai-dialog-backdrop">
+      <div className="ai-dialog-popup">
+        <div className="ai-dialog-title">
+          {action ? action.charAt(0).toUpperCase() + action.slice(1) : ""}
+        </div>
+        <div className="ai-dialog-description">
+          Optional: add instructions for the AI.
+        </div>
+        <textarea
+          ref={textareaRef}
+          className="ai-dialog-textarea"
+          placeholder={action ? placeholders[action] : ""}
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          rows={3}
+        />
+        <div className="ai-dialog-actions">
+          <button className="btn" onClick={onCancel}>
+            Cancel
+          </button>
+          <button
+            className="btn ai-dialog-submit"
+            onClick={() => {
+              if (action) {
+                onSubmit(action, message.trim());
+              }
+            }}
+          >
+            Submit
+          </button>
+        </div>
+      </div>
+    </dialog>
   );
 }

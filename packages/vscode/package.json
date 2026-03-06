@@ -1,0 +1,54 @@
+{
+  "name": "ineffable-vscode",
+  "displayName": "Ineffable — ASCII Diagram Editor",
+  "description": "Draw ASCII diagrams and share them with Claude Code",
+  "version": "0.0.1",
+  "publisher": "ineffable",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Visualization", "Other"],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ineffable.open",
+        "title": "Ineffable: Open Diagram Editor"
+      },
+      {
+        "command": "ineffable.setupHook",
+        "title": "Ineffable: Configure Claude Code Hook"
+      }
+    ],
+    "configuration": {
+      "title": "Ineffable",
+      "properties": {
+        "ineffable.diagramsDir": {
+          "type": "string",
+          "default": "ineffable-diagrams",
+          "description": "Workspace-relative path where diagram .txt files are stored"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs --production",
+    "dev": "node esbuild.mjs --watch"
+  },
+  "dependencies": {
+    "@ineffable/core": "workspace:*",
+    "@ineffable/client": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.20.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.7.0"
+  }
+}

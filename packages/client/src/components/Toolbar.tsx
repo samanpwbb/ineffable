@@ -1,5 +1,3 @@
-import { Toggle } from "@base-ui/react/toggle";
-import { ToggleGroup } from "@base-ui/react/toggle-group";
 import React from "react";
 import type { Tool } from "../editor.js";
 
@@ -19,27 +17,20 @@ interface ToolbarProps {
 export function Toolbar({ activeTool, onToolChange }: ToolbarProps) {
   return (
     <div className="toolbar">
-      <ToggleGroup
-        value={[activeTool]}
-        onValueChange={(value) => {
-          if (value.length > 0) {
-            onToolChange(value[value.length - 1] as Tool);
-          }
-        }}
-      >
+      <div role="group">
         {tools.map((tool) => (
-          <Toggle
+          <button
             key={tool.value}
-            value={tool.value}
             aria-label={tool.label}
+            aria-pressed={activeTool === tool.value}
             className="toolbar-btn"
-            pressed={activeTool === tool.value}
+            onClick={() => onToolChange(tool.value)}
           >
             <span className="toolbar-btn-label">{tool.label}</span>
             <span className="toolbar-btn-shortcut">{tool.shortcut}</span>
-          </Toggle>
+          </button>
         ))}
-      </ToggleGroup>
+      </div>
     </div>
   );
 }
