@@ -1,6 +1,7 @@
 {
   "name": "ineffable",
-  "version": "0.2.0",
+  "version": "0.2.1",
+  "packageManager": "pnpm@10.11.1",
   "description": "ASCII diagram editor for any project",
   "license": "MIT",
   "type": "module",
