@@ -1,6 +1,6 @@
 {
   "name": "ineffable",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "packageManager": "pnpm@10.11.1",
   "description": "ASCII diagram editor for any project",
   "license": "MIT",
@@ -19,6 +19,7 @@
     "dev": "pnpm -r --parallel dev",
     "dev:server": "pnpm --filter @ineffable/server dev -- ../../diagrams",
     "dev:client": "pnpm --filter @ineffable/client dev",
+    "test": "pnpm -r test",
     "prepublishOnly": "pnpm build"
   },
   "dependencies": {
