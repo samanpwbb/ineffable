@@ -25,8 +25,8 @@ type GridPos = { col: number; row: number };
 type Interaction =
   | { type: "idle" }
   | { type: "pending"; start: GridPos }
-  | { type: "moving"; start: GridPos; widget: Widget; offset: GridPos; snapshot: Grid; preview: Rect }
-  | { type: "movingGroup"; start: GridPos; snapshot: Grid; delta: GridPos }
+  | { type: "moving"; start: GridPos; widget: Widget; offset: GridPos; snapshot: Grid; preview: Rect; isDuplicate?: boolean }
+  | { type: "movingGroup"; start: GridPos; snapshot: Grid; delta: GridPos; isDuplicate?: boolean }
   | { type: "resizing"; start: GridPos; widget: Widget; handle: HandleCorner; anchor: Rect; snapshot: Grid; preview: Rect }
   | { type: "boxSelecting"; start: GridPos; marquee: Rect | null }
   | { type: "drawing"; start: GridPos; preview: Rect | null };
@@ -45,6 +45,10 @@ export class Editor {
 
   // Interaction state (drag/resize/box-select/draw)
   private interaction: Interaction = { type: "idle" };
+
+  // Clipboard for copy/paste
+  private clipboard: { widgets: Widget[]; anchorCol: number; anchorRow: number } | null = null;
+  private lastMouseGridPos: GridPos = { col: 0, row: 0 };
 
   /** The rect to display for single selection: preview rect during interaction, otherwise widget rect. */
   private get selectionRect(): Rect | null {
@@ -236,7 +240,7 @@ export class Editor {
 
   // --- Mouse handlers ---
 
-  onMouseDown(px: number, py: number, shiftKey = false): void {
+  onMouseDown(px: number, py: number, shiftKey = false, altKey = false): void {
     if (this.isEditing) {
       this.stopEditing();
     }
@@ -290,7 +294,7 @@ export class Editor {
           }
           this.interaction = {
             type: "movingGroup", start, snapshot: this.grid.clone(),
-            delta: { col: 0, row: 0 },
+            delta: { col: 0, row: 0 }, isDuplicate: altKey,
           };
           return;
         }
@@ -320,6 +324,7 @@ export class Editor {
           type: "moving", start, widget: this.selectedWidget,
           offset: { col: col - selRect.col, row: row - selRect.row },
           snapshot: this.grid.clone(), preview: { ...selRect },
+          isDuplicate: altKey,
         };
         return;
       }
@@ -352,6 +357,7 @@ export class Editor {
             type: "moving", start, widget: hit,
             offset: { col: col - hit.rect.col, row: row - hit.rect.row },
             snapshot: this.grid.clone(), preview: { ...hit.rect },
+            isDuplicate: altKey,
           };
         }
       } else {
@@ -370,6 +376,8 @@ export class Editor {
 
   onMouseMove(px: number, py: number): void {
     const { col, row } = this.renderer.pixelToGrid(px, py);
+    this.lastMouseGridPos.col = col;
+    this.lastMouseGridPos.row = row;
     this.updateStatus(col, row);
 
     const ix = this.interaction;
@@ -436,7 +444,7 @@ export class Editor {
         );
         this.interaction = { type: "idle" };
         if (clamped.col !== 0 || clamped.row !== 0) {
-          this.moveWidgets(this.selectedWidgets, clamped.col, clamped.row, ix.snapshot);
+          this.moveWidgets(this.selectedWidgets, clamped.col, clamped.row, ix.snapshot, ix.isDuplicate);
         } else {
           this.redraw();
         }
@@ -450,7 +458,7 @@ export class Editor {
         });
         this.interaction = { type: "idle" };
         if (clamped.col !== ix.widget.rect.col || clamped.row !== ix.widget.rect.row) {
-          this.moveWidget(ix.widget, clamped.col, clamped.row, ix.snapshot);
+          this.moveWidget(ix.widget, clamped.col, clamped.row, ix.snapshot, ix.isDuplicate);
         } else {
           this.redraw();
         }
@@ -531,25 +539,30 @@ export class Editor {
 
   // --- Widget movement ---
 
-  private moveWidget(widget: Widget, newCol: number, newRow: number, snapshot: Grid): void {
-    const snapshotWidgets = detectWidgets(snapshot);
-
-    // Restore grid to pre-move state
+  private restoreFromSnapshot(snapshot: Grid): void {
     for (let r = 0; r < this.grid.height; r++) {
       for (let c = 0; c < this.grid.width; c++) {
         this.grid.set(c, r, snapshot.get(c, r));
       }
     }
+  }
 
-    // Clear the widget's original footprint
+  private moveWidget(widget: Widget, newCol: number, newRow: number, snapshot: Grid, isDuplicate = false): void {
+    const snapshotWidgets = detectWidgets(snapshot);
+    this.restoreFromSnapshot(snapshot);
+
     const oldRect = widget.rect;
-    this.grid.clearRect(oldRect.col, oldRect.row, oldRect.width, oldRect.height);
 
-    // Re-render overlapping widgets using snapshot data
-    for (const w of snapshotWidgets) {
-      if (this.rectsEqual(w.rect, oldRect) && w.type === widget.type) continue;
-      if (this.rectsOverlap(w.rect, oldRect)) {
-        renderWidget(this.grid, w);
+    if (!isDuplicate) {
+      // Clear the widget's original footprint
+      this.grid.clearRect(oldRect.col, oldRect.row, oldRect.width, oldRect.height);
+
+      // Re-render overlapping widgets using snapshot data
+      for (const w of snapshotWidgets) {
+        if (this.rectsEqual(w.rect, oldRect) && w.type === widget.type) continue;
+        if (this.rectsOverlap(w.rect, oldRect)) {
+          renderWidget(this.grid, w);
+        }
       }
     }
 
@@ -567,53 +580,35 @@ export class Editor {
     this.save();
   }
 
-  private moveWidgets(widgets: Widget[], deltaCol: number, deltaRow: number, snapshot: Grid): void {
+  private moveWidgets(widgets: Widget[], deltaCol: number, deltaRow: number, snapshot: Grid, isDuplicate = false): void {
     const snapshotWidgets = detectWidgets(snapshot);
-
-    // Restore grid from snapshot
-    for (let r = 0; r < this.grid.height; r++) {
-      for (let c = 0; c < this.grid.width; c++) {
-        this.grid.set(c, r, snapshot.get(c, r));
-      }
-    }
+    this.restoreFromSnapshot(snapshot);
 
     // Collect all widgets to move (including children of boxes)
-    const toMove: Widget[] = [];
-    const toMoveSet = new Set<Widget>();
-    for (const w of widgets) {
-      if (toMoveSet.has(w)) continue;
-      toMove.push(w);
-      toMoveSet.add(w);
-      if (w.type === "box") {
-        for (const child of widgetsInside(snapshotWidgets, w.rect)) {
-          if (!toMoveSet.has(child)) {
-            toMove.push(child);
-            toMoveSet.add(child);
-          }
-        }
+    const toMove = this.collectWidgetsWithChildren(widgets, snapshotWidgets);
+
+    if (!isDuplicate) {
+      // Clear all original footprints and compute union of cleared area
+      let clearMinCol = Infinity, clearMinRow = Infinity;
+      let clearMaxCol = -Infinity, clearMaxRow = -Infinity;
+      for (const w of toMove) {
+        this.grid.clearRect(w.rect.col, w.rect.row, w.rect.width, w.rect.height);
+        clearMinCol = Math.min(clearMinCol, w.rect.col);
+        clearMinRow = Math.min(clearMinRow, w.rect.row);
+        clearMaxCol = Math.max(clearMaxCol, w.rect.col + w.rect.width);
+        clearMaxRow = Math.max(clearMaxRow, w.rect.row + w.rect.height);
       }
-    }
+      const clearedArea: Rect = {
+        col: clearMinCol, row: clearMinRow,
+        width: clearMaxCol - clearMinCol, height: clearMaxRow - clearMinRow,
+      };
 
-    // Clear all original footprints and compute union of cleared area
-    let clearMinCol = Infinity, clearMinRow = Infinity;
-    let clearMaxCol = -Infinity, clearMaxRow = -Infinity;
-    for (const w of toMove) {
-      this.grid.clearRect(w.rect.col, w.rect.row, w.rect.width, w.rect.height);
-      clearMinCol = Math.min(clearMinCol, w.rect.col);
-      clearMinRow = Math.min(clearMinRow, w.rect.row);
-      clearMaxCol = Math.max(clearMaxCol, w.rect.col + w.rect.width);
-      clearMaxRow = Math.max(clearMaxRow, w.rect.row + w.rect.height);
-    }
-    const clearedArea: Rect = {
-      col: clearMinCol, row: clearMinRow,
-      width: clearMaxCol - clearMinCol, height: clearMaxRow - clearMinRow,
-    };
-
-    // Re-render overlapping widgets using snapshot data
-    for (const w of snapshotWidgets) {
-      if (toMove.some(m => this.rectsEqual(m.rect, w.rect) && m.type === w.type)) continue;
-      if (this.rectsOverlap(w.rect, clearedArea)) {
-        renderWidget(this.grid, w);
+      // Re-render overlapping widgets using snapshot data
+      for (const w of snapshotWidgets) {
+        if (toMove.some(m => this.rectsEqual(m.rect, w.rect) && m.type === w.type)) continue;
+        if (this.rectsOverlap(w.rect, clearedArea)) {
+          renderWidget(this.grid, w);
+        }
       }
     }
 
@@ -704,12 +699,7 @@ export class Editor {
   }
 
   private resizeWidget(widget: Widget, newRect: Rect, snapshot: Grid): void {
-    // Restore grid from snapshot
-    for (let r = 0; r < this.grid.height; r++) {
-      for (let c = 0; c < this.grid.width; c++) {
-        this.grid.set(c, r, snapshot.get(c, r));
-      }
-    }
+    this.restoreFromSnapshot(snapshot);
 
     const oldRect = widget.rect;
     this.grid.clearRect(oldRect.col, oldRect.row, oldRect.width, oldRect.height);
@@ -766,13 +756,20 @@ export class Editor {
     if (!skipSave) this.save();
   }
 
+  /** Number of in-flight save requests (used to skip file-changed bounce-backs). */
+  pendingSaves = 0;
+
   async save(): Promise<void> {
     if (!this.currentFile) return;
-    this.history.push(this.grid.toString());
+    const content = this.grid.toString();
+    this.history.push(content);
+    this.pendingSaves++;
     try {
-      await writeFile(this.currentFile, this.grid.toString());
+      await writeFile(this.currentFile, content);
     } catch (e) {
       console.error("Failed to save:", e);
+    } finally {
+      this.pendingSaves--;
     }
   }
 
@@ -805,6 +802,89 @@ export class Editor {
     }
     this.selectedWidgets = [];
     this.reparse();
+    this.redraw();
+    this.save();
+  }
+
+  // --- Clipboard (copy/cut/paste) ---
+
+  private collectWidgetsWithChildren(selected: Widget[], allWidgets: Widget[] = this.widgets): Widget[] {
+    const result: Widget[] = [];
+    const seen = new Set<Widget>();
+    for (const w of selected) {
+      if (seen.has(w)) continue;
+      result.push(w);
+      seen.add(w);
+      if (w.type === "box") {
+        for (const child of widgetsInside(allWidgets, w.rect)) {
+          if (!seen.has(child)) {
+            result.push(child);
+            seen.add(child);
+          }
+        }
+      }
+    }
+    return result;
+  }
+
+  copySelected(): void {
+    if (this.selectedWidgets.length === 0) return;
+    const toCopy = this.collectWidgetsWithChildren(this.selectedWidgets);
+    const anchorCol = Math.min(...toCopy.map(w => w.rect.col));
+    const anchorRow = Math.min(...toCopy.map(w => w.rect.row));
+    this.clipboard = {
+      widgets: toCopy.map(w => ({ ...w, rect: { ...w.rect } }) as Widget),
+      anchorCol,
+      anchorRow,
+    };
+  }
+
+  cutSelected(): void {
+    this.copySelected();
+    this.deleteSelected();
+  }
+
+  paste(): void {
+    if (!this.clipboard) return;
+    const { widgets, anchorCol, anchorRow } = this.clipboard;
+
+    // Compute bounding box dimensions
+    const maxCol = Math.max(...widgets.map(w => w.rect.col + w.rect.width));
+    const maxRow = Math.max(...widgets.map(w => w.rect.row + w.rect.height));
+    const bbWidth = maxCol - anchorCol;
+    const bbHeight = maxRow - anchorRow;
+
+    // Center on last known cursor position, clamped to grid
+    let targetCol = this.lastMouseGridPos.col - Math.floor(bbWidth / 2);
+    let targetRow = this.lastMouseGridPos.row - Math.floor(bbHeight / 2);
+    targetCol = Math.max(0, Math.min(targetCol, this.grid.width - bbWidth));
+    targetRow = Math.max(0, Math.min(targetRow, this.grid.height - bbHeight));
+
+    const deltaCol = targetCol - anchorCol;
+    const deltaRow = targetRow - anchorRow;
+
+    // Render each widget at offset position
+    const pastedPositions: { col: number; row: number }[] = [];
+    for (const w of widgets) {
+      const moved: Widget = {
+        ...w,
+        rect: { ...w.rect, col: w.rect.col + deltaCol, row: w.rect.row + deltaRow },
+      } as Widget;
+      renderWidget(this.grid, moved);
+      pastedPositions.push({ col: moved.rect.col, row: moved.rect.row });
+    }
+
+    this.reparse();
+
+    // Select pasted widgets
+    this.selectedWidgets = [];
+    for (const pos of pastedPositions) {
+      const found = widgetAt(this.widgets, pos.col, pos.row);
+      if (found && !this.selectedWidgets.includes(found)) {
+        this.selectedWidgets.push(found);
+      }
+    }
+
     this.redraw();
     this.save();
   }

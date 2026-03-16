@@ -66,12 +66,16 @@ export function App() {
     let ws: WebSocket | null = null;
     connectWs((msg) => {
       if (msg.type === "file-changed" && msg.name === editorRef.current?.currentFile) {
-        // Skip reload if we're inline-editing — the change came from our own save
+        // Skip reload if the change came from our own save
         if (editorRef.current?.isEditing) return;
+        if (editorRef.current?.pendingSaves) return;
         readFile(msg.name).then((content) => {
+          const editor = editorRef.current;
+          if (!editor) return;
+          // Skip if content matches current grid or more saves started since
+          if (editor.pendingSaves || content === editor.grid.toString()) return;
           const grid = Grid.fromString(content, DEFAULT_WIDTH, DEFAULT_HEIGHT);
-          // Reload grid but preserve undo history (this is the same file)
-          editorRef.current!.setGrid(grid, false);
+          editor.setGrid(grid, false);
         });
       } else if (msg.type === "ai-status" && msg.name === editorRef.current?.currentFile) {
         if (msg.status === "working") {
@@ -131,6 +135,23 @@ export function App() {
         return;
       }
 
+      // Copy/Cut/Paste
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c") {
+        e.preventDefault();
+        editor?.copySelected();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "x") {
+        e.preventDefault();
+        editor?.cutSelected();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "v") {
+        e.preventDefault();
+        editor?.paste();
+        return;
+      }
+
       // Undo/redo
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
@@ -174,7 +195,7 @@ export function App() {
     editorRef.current?.clearHover();
   }, []);
   const onMouseDown = useCallback((e: React.MouseEvent) => {
-    editorRef.current?.onMouseDown(e.clientX, e.clientY, e.shiftKey);
+    editorRef.current?.onMouseDown(e.clientX, e.clientY, e.shiftKey, e.altKey);
     document.addEventListener("mousemove", onMouseMove);
     document.addEventListener("mouseup", onMouseUp);
   }, [onMouseMove, onMouseUp]);
