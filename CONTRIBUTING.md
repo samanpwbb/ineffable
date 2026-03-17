@@ -47,3 +47,30 @@ Diagram files are plain text stored in `diagrams/` as `.txt` files. Lines starti
 ```
 
 See [PATTERNS.md](PATTERNS.md) for full widget pattern definitions.
+
+## Releasing
+
+Releases are published to npm automatically via GitHub Actions when a version tag is pushed.
+
+1. Bump the version in the root `package.json`:
+
+   ```bash
+   # e.g. 0.2.5 → 0.3.0
+   vim package.json
+   ```
+
+2. Commit the bump and tag it:
+
+   ```bash
+   git add package.json
+   git commit -m "v0.3.0"
+   git tag v0.3.0
+   ```
+
+3. Push the commit and tag:
+
+   ```bash
+   git push origin main --tags
+   ```
+
+The `publish.yml` workflow runs on any `v*` tag push. It installs dependencies, runs tests, builds, and publishes to npm using the `NPM_TOKEN` secret.
