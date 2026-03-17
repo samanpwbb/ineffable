@@ -16,6 +16,12 @@ export function renderWidget(grid: Grid, widget: Widget): void {
     case "button":
       renderButton(grid, widget.rect.col, widget.rect.row, widget.label, widget.rect.width);
       break;
+    case "checkbox":
+      renderCheckbox(grid, widget.rect.col, widget.rect.row, widget.checked, widget.label, widget.rect.width);
+      break;
+    case "input":
+      renderInput(grid, widget.rect.col, widget.rect.row, widget.rect.width);
+      break;
     case "text":
       grid.writeString(widget.rect.col, widget.rect.row, widget.content);
       break;
@@ -54,6 +60,22 @@ function renderButton(grid: Grid, col: number, row: number, label: string, total
   const padRight = padTotal - padLeft;
   const content = "[ " + " ".repeat(padLeft) + label + " ".repeat(padRight) + " ]";
   grid.writeString(col, row, content);
+}
+
+function renderCheckbox(grid: Grid, col: number, row: number, checked: boolean, label: string, totalWidth: number): void {
+  const prefix = checked ? "[x] " : "[ ] ";
+  const minWidth = prefix.length + label.length;
+  const width = Math.max(minWidth, totalWidth);
+  const content = prefix + label + " ".repeat(width - minWidth);
+  grid.writeString(col, row, content.slice(0, width));
+}
+
+function renderInput(grid: Grid, col: number, row: number, width: number): void {
+  grid.set(col, row, "[");
+  for (let c = col + 1; c < col + width - 1; c++) {
+    grid.set(c, row, "_");
+  }
+  grid.set(col + width - 1, row, "]");
 }
 
 function renderLine(grid: Grid, col: number, row: number, direction: "horizontal" | "vertical", length: number): void {

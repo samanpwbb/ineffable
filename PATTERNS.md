@@ -44,6 +44,37 @@ A single-line label enclosed in square brackets with a space padding.
 - Label text between the padding spaces
 - Always exactly one line tall
 
+### Checkbox
+
+A single-line checkbox with a label. Can be checked or unchecked.
+
+Unchecked:
+```
+[ ] Accept terms
+```
+
+Checked:
+```
+[x] Remember me
+```
+
+- Starts with `[x]` (checked) or `[ ]` (unchecked) — exactly 3 characters
+- Followed by a space and label text
+- Always exactly one line tall
+
+### Input
+
+A single-line text input field represented by underscores inside brackets.
+
+```
+[____________]
+```
+
+- Starts with `[` and ends with `]`
+- Interior is filled with `_` (underscore) characters
+- Minimum 2 underscores (minimum width: 4)
+- Always exactly one line tall
+
 ### Text
 
 Plain text with no surrounding decoration. Any characters that don't match
@@ -76,6 +107,8 @@ Vertical:
 
 When detecting widgets from the grid, match in this order:
 1. Box (look for corners, trace edges)
-2. Button (look for `[ ... ]` with padding)
-3. Line (horizontal/vertical runs not part of a box)
-4. Text (everything else that isn't whitespace)
+2. Checkbox (look for `[x]` or `[ ]` followed by space and label)
+3. Input (look for `[___]` — brackets containing underscores)
+4. Button (look for `[ ... ]` with padding)
+5. Line (horizontal/vertical runs not part of a box)
+6. Text (everything else that isn't whitespace)

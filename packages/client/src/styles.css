@@ -113,6 +113,11 @@ canvas {
   color: var(--color-text-bright);
 }
 
+.select-item--action {
+  border-top: 1px solid var(--color-border);
+  font-style: italic;
+}
+
 /* ---- Toolbar (vertical) ---- */
 
 .toolbar [role="group"] {

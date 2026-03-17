@@ -9,6 +9,8 @@ const tools: { value: Tool; label: string; shortcut: string }[] = [
   { value: "line", label: "Line", shortcut: "L" },
   { value: "text", label: "Text", shortcut: "T" },
   { value: "button", label: "Button", shortcut: "U" },
+  { value: "checkbox", label: "Checkbox", shortcut: "K" },
+  { value: "input", label: "Input", shortcut: "I" },
 ];
 
 interface ToolbarProps {
