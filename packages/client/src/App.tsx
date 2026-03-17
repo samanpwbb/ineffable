@@ -6,7 +6,7 @@ import { Select } from "./components/Select.js";
 import { Toolbar, tools } from "./components/Toolbar.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { Button } from "./components/Button.js";
-import { listFiles, readFile, triggerAi, connectWs } from "./api.js";
+import { listFiles, readFile, createFile, triggerAi, connectWs } from "./api.js";
 import { AiDialog, AiAction } from "./components/AiDialog.js";
 
 export function App() {
@@ -244,6 +244,15 @@ export function App() {
     });
   }, []);
 
+  const handleNewFile = useCallback(async () => {
+    const name = prompt("File name:");
+    if (!name) return;
+    const filename = name.endsWith(".txt") ? name : name + ".txt";
+    await createFile(filename);
+    setFiles((prev) => [...prev, filename].sort());
+    setCurrentFile(filename);
+  }, []);
+
   const handleClear = useCallback(() => {
     editorRef.current?.clearAll();
   }, []);
@@ -264,6 +273,7 @@ export function App() {
           onChange={setCurrentFile}
           options={fileOptions}
           placeholder="Select file..."
+          onNewFile={handleNewFile}
         />
         <Toolbar activeTool={activeTool} onToolChange={handleToolChange} />
         <Button

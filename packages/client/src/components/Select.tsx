@@ -6,9 +6,10 @@ interface SelectProps {
   onChange: (value: string) => void;
   options: { label: string; value: string }[];
   placeholder?: string;
+  onNewFile?: () => void;
 }
 
-export function Select({ value, onChange, options, placeholder }: SelectProps) {
+export function Select({ value, onChange, options, placeholder, onNewFile }: SelectProps) {
   return (
     <BaseSelect.Root value={value} onValueChange={(v) => { if (v != null) onChange(v); }}>
       <BaseSelect.Trigger className="select-trigger">
@@ -26,6 +27,18 @@ export function Select({ value, onChange, options, placeholder }: SelectProps) {
                 <BaseSelect.ItemText>{opt.label}</BaseSelect.ItemText>
               </BaseSelect.Item>
             ))}
+            {onNewFile && (
+              <div
+                className="select-item select-item--action"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onNewFile();
+                }}
+              >
+                New file…
+              </div>
+            )}
           </BaseSelect.Popup>
         </BaseSelect.Positioner>
       </BaseSelect.Portal>

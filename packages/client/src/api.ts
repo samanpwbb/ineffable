@@ -56,6 +56,21 @@ export async function writeFile(name: string, content: string): Promise<void> {
   }
 }
 
+export async function createFile(name: string): Promise<void> {
+  const base = await getBaseUrl();
+  try {
+    const res = await fetch(`${base}/file/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "text/plain" },
+      body: "",
+    });
+    if (!res.ok) throw new Error(`Failed to create ${name}: ${res.status}`);
+  } catch (e) {
+    _baseUrl = null;
+    throw e;
+  }
+}
+
 export async function triggerAi(name: string, instruction = "repair", userMessage = ""): Promise<void> {
   const base = await getBaseUrl();
   try {
