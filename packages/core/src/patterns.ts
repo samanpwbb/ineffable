@@ -4,7 +4,7 @@
  * for both rendering and detection.
  */
 
-export type WidgetType = "box" | "button" | "text" | "line";
+export type WidgetType = "box" | "checkbox" | "input" | "button" | "text" | "line";
 
 export const BOX_CHARS = {
   topLeft: "┌",
@@ -57,10 +57,22 @@ export interface TextWidget {
   rect: Rect;
 }
 
+export interface CheckboxWidget {
+  type: "checkbox";
+  checked: boolean;
+  label: string;
+  rect: Rect;
+}
+
+export interface InputWidget {
+  type: "input";
+  rect: Rect;
+}
+
 export interface LineWidget {
   type: "line";
   direction: "horizontal" | "vertical";
   rect: Rect;
 }
 
-export type Widget = BoxWidget | ButtonWidget | TextWidget | LineWidget;
+export type Widget = BoxWidget | CheckboxWidget | InputWidget | ButtonWidget | TextWidget | LineWidget;

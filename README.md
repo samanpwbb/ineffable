@@ -41,13 +41,15 @@ ineffable [directory] [--port <port>]
 
 Select a tool from the toolbar or use keyboard shortcuts:
 
-| Tool   | Key | Interaction                     |
-|--------|-----|---------------------------------|
-| Select | V   | Click a widget to select it     |
-| Box    | B   | Click + drag to draw            |
-| Line   | L   | Click + drag to draw            |
-| Text   | T   | Click to place, enter text      |
-| Button | U   | Click to place, enter label     |
+| Tool     | Key | Interaction                     |
+|----------|-----|---------------------------------|
+| Select   | V   | Click a widget to select it     |
+| Box      | B   | Click + drag to draw            |
+| Line     | L   | Click + drag to draw            |
+| Text     | T   | Click to place, enter text      |
+| Button   | U   | Click to place, enter label     |
+| Checkbox | K   | Click to place, enter label     |
+| Input    | I   | Click or drag to set width      |
 
 Press **Escape** to return to the select tool.
 
@@ -93,12 +95,14 @@ Any external change to a `.txt` file in your target directory (from an LLM, a te
 See [PATTERNS.md](PATTERNS.md) for full pattern definitions.
 
 ```
-Box:       ┌──────┐        Button:   [ Submit ]
+Box:       ┌──────┐        Button:     [ Submit ]
            │      │
-           └──────┘
+           └──────┘        Checkbox:   [x] Remember me
+                                       [ ] Newsletter
 Text:      Hello world
-                           Line:     ──────── (horizontal)
-                                     │ (vertical)
+                           Input:      [____________]
+                           Line:       ──────── (horizontal)
+                                       │ (vertical)
 ```
 
 ## Development

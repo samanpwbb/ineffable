@@ -20,6 +20,9 @@ import { EditSession } from "./editSession.js";
 
 export type Tool = "select" | WidgetType;
 
+/** Widget types that are single-row and only resize horizontally. */
+const HORIZONTAL_TYPES = new Set<WidgetType>(["button", "checkbox", "input"]);
+
 type GridPos = { col: number; row: number };
 
 type Interaction =
@@ -133,23 +136,23 @@ export class Editor {
 
   private get isResizable(): boolean {
     const t = this.selectedWidget?.type;
-    return t === "box" || t === "line" || t === "button";
+    return t === "box" || t === "line" || (t != null && HORIZONTAL_TYPES.has(t));
   }
 
   private get selectedLineDirection(): "horizontal" | "vertical" | undefined {
     const w = this.selectedWidget;
     if (w?.type === "line") return w.direction;
-    if (w?.type === "button") return "horizontal";
+    if (w != null && HORIZONTAL_TYPES.has(w.type)) return "horizontal";
     return undefined;
   }
 
   private static widgetResizable(w: Widget): boolean {
-    return w.type === "box" || w.type === "line" || w.type === "button";
+    return w.type === "box" || w.type === "line" || HORIZONTAL_TYPES.has(w.type);
   }
 
   private static widgetLineDirection(w: Widget): "horizontal" | "vertical" | undefined {
     if (w.type === "line") return w.direction;
-    if (w.type === "button") return "horizontal";
+    if (HORIZONTAL_TYPES.has(w.type)) return "horizontal";
     return undefined;
   }
 
@@ -260,7 +263,7 @@ export class Editor {
 
     if (isDoubleClick && this.tool === "select" && this.selectedWidget) {
       const t = this.selectedWidget.type;
-      if (t === "button" || t === "text") {
+      if (t === "button" || t === "text" || t === "checkbox") {
         this.startEditing(false);
         return;
       }
@@ -415,9 +418,10 @@ export class Editor {
       case "drawing": {
         if (this.tool === "box" || this.tool === "line") {
           ix.preview = this.dragToRect(ix.start, { col, row });
-        } else if (this.tool === "button") {
+        } else if (this.tool !== "select" && HORIZONTAL_TYPES.has(this.tool)) {
           const startCol = Math.min(ix.start.col, col);
-          const width = Math.max(5, Math.abs(col - ix.start.col) + 1);
+          const minWidth = this.tool === "checkbox" ? 7 : this.tool === "input" ? 4 : 5;
+          const width = Math.max(minWidth, Math.abs(col - ix.start.col) + 1);
           ix.preview = { col: startCol, row: ix.start.row, width, height: 1 };
         }
         this.redraw();
@@ -518,6 +522,31 @@ export class Editor {
           }, true);
           this.tool = "select";
           this.startEditing(true);
+        } else if (this.tool === "checkbox") {
+          let width = 7; // minimum: [x] ab
+          if (hasDragged) {
+            width = Math.max(7, Math.abs(col - ix.start.col) + 1);
+          }
+          const startCol = hasDragged ? Math.min(col, ix.start.col) : col;
+          const cbRow = hasDragged ? ix.start.row : row;
+          this.placeWidget({
+            type: "checkbox", checked: false, label: "",
+            rect: { col: startCol, row: cbRow, width, height: 1 },
+          }, true);
+          this.tool = "select";
+          this.startEditing(true);
+        } else if (this.tool === "input") {
+          let width = 8; // default: [______]
+          if (hasDragged) {
+            width = Math.max(4, Math.abs(col - ix.start.col) + 1);
+          }
+          const startCol = hasDragged ? Math.min(col, ix.start.col) : col;
+          const inputRow = hasDragged ? ix.start.row : row;
+          this.placeWidget({
+            type: "input",
+            rect: { col: startCol, row: inputRow, width, height: 1 },
+          });
+          this.tool = "select";
         } else if (this.tool === "text" && !hasDragged) {
           const textWidget: Widget = {
             type: "text", content: "",
@@ -643,6 +672,10 @@ export class Editor {
 
     if (widget?.type === "button") {
       minW = Math.max(5, widget.label.length + 4);
+    } else if (widget?.type === "checkbox") {
+      minW = Math.max(7, widget.label.length + 4);
+    } else if (widget?.type === "input") {
+      minW = 4;
     }
 
     let fixedCol: number, fixedRow: number;
@@ -674,7 +707,7 @@ export class Editor {
     if (widget?.type === "line") {
       if (widget.direction === "horizontal") { dragRow = anchor.row; }
       else { dragCol = anchor.col; }
-    } else if (widget?.type === "button") {
+    } else if (widget != null && HORIZONTAL_TYPES.has(widget.type)) {
       dragRow = anchor.row;
     }
 
@@ -691,7 +724,7 @@ export class Editor {
       }
     }
 
-    if (widget?.type === "button") {
+    if (widget != null && HORIZONTAL_TYPES.has(widget.type)) {
       return this.clampRect({ col: newCol, row: anchor.row, width: newWidth, height: 1 });
     }
 
@@ -1010,7 +1043,7 @@ export class Editor {
   startEditing(isNew: boolean): void {
     if (!this.selectedWidget) return;
     const w = this.selectedWidget;
-    if (w.type !== "button" && w.type !== "text") return;
+    if (w.type !== "button" && w.type !== "text" && w.type !== "checkbox") return;
 
     this.editSession = new EditSession(w, isNew, () => {
       this.redraw();
@@ -1080,6 +1113,22 @@ export class Editor {
           width: w.rect.width + growLeft + growRight,
         };
         const updated: Widget = { type: "button", label: session.buffer, rect: newRect };
+        renderWidget(this.grid, updated);
+        this.selectedWidgets = [updated];
+      }
+    } else if (w.type === "checkbox") {
+      const neededWidth = Math.max(7, session.buffer.length + 4); // [x] + space + label
+      if (neededWidth <= w.rect.width) {
+        const updated: Widget = { type: "checkbox", checked: w.checked, label: session.buffer, rect: w.rect };
+        renderWidget(this.grid, updated);
+        this.selectedWidgets = [updated];
+      } else {
+        const grow = neededWidth - w.rect.width;
+        const newRect = {
+          ...w.rect,
+          width: w.rect.width + grow,
+        };
+        const updated: Widget = { type: "checkbox", checked: w.checked, label: session.buffer, rect: newRect };
         renderWidget(this.grid, updated);
         this.selectedWidgets = [updated];
       }

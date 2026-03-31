@@ -5,6 +5,8 @@ export {
   type WidgetType,
   type Widget,
   type BoxWidget,
+  type CheckboxWidget,
+  type InputWidget,
   type ButtonWidget,
   type TextWidget,
   type LineWidget,
@@ -26,6 +28,8 @@ export {
 } from "./plugin.js";
 export { DEFAULT_PLUGINS } from "./plugins/index.js";
 export { BoxParserPlugin } from "./plugins/box.js";
+export { CheckboxParserPlugin } from "./plugins/checkbox.js";
+export { InputParserPlugin } from "./plugins/input.js";
 export { ButtonParserPlugin } from "./plugins/button.js";
 export { LineParserPlugin } from "./plugins/line.js";
 export { TextParserPlugin } from "./plugins/text.js";
