@@ -135,15 +135,11 @@ export class Editor {
   }
 
   private get isResizable(): boolean {
-    const t = this.selectedWidget?.type;
-    return t === "box" || t === "line" || (t != null && HORIZONTAL_TYPES.has(t));
+    return this.selectedWidget != null && Editor.widgetResizable(this.selectedWidget);
   }
 
   private get selectedLineDirection(): "horizontal" | "vertical" | undefined {
-    const w = this.selectedWidget;
-    if (w?.type === "line") return w.direction;
-    if (w != null && HORIZONTAL_TYPES.has(w.type)) return "horizontal";
-    return undefined;
+    return this.selectedWidget != null ? Editor.widgetLineDirection(this.selectedWidget) : undefined;
   }
 
   private static widgetResizable(w: Widget): boolean {
