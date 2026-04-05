@@ -8,6 +8,7 @@ import { StatusBar } from "./components/StatusBar.js";
 import { Button } from "./components/Button.js";
 import { listFiles, readFile, createFile, triggerAi, connectWs } from "./api.js";
 import { AiDialog, AiAction } from "./components/AiDialog.js";
+import { NewFileDialog } from "./components/NewFileDialog.js";
 
 export function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -22,6 +23,7 @@ export function App() {
   const [aiDialogAction, setAiDialogAction] = useState<AiAction | null>(null);
   const [shiftHeld, setShiftHeld] = useState(false);
   const [autoRepair, setAutoRepair] = useState(true);
+  const [newFileDialogOpen, setNewFileDialogOpen] = useState(false);
 
   // Init canvas + editor
   useEffect(() => {
@@ -244,13 +246,20 @@ export function App() {
     });
   }, []);
 
-  const handleNewFile = useCallback(async () => {
-    const name = prompt("File name:");
-    if (!name) return;
+  const handleNewFile = useCallback(() => {
+    setNewFileDialogOpen(true);
+  }, []);
+
+  const handleNewFileSubmit = useCallback(async (name: string) => {
+    setNewFileDialogOpen(false);
     const filename = name.endsWith(".txt") ? name : name + ".txt";
     await createFile(filename);
     setFiles((prev) => [...prev, filename].sort());
     setCurrentFile(filename);
+  }, []);
+
+  const handleNewFileCancel = useCallback(() => {
+    setNewFileDialogOpen(false);
   }, []);
 
   const handleClear = useCallback(() => {
@@ -314,6 +323,11 @@ export function App() {
         action={aiDialogAction}
         onSubmit={handleAiSubmit}
         onCancel={handleAiCancel}
+      />
+      <NewFileDialog
+        open={newFileDialogOpen}
+        onSubmit={handleNewFileSubmit}
+        onCancel={handleNewFileCancel}
       />
       {aiStatus && (
         <div className={`ai-indicator ai-indicator--${aiStatus.status}`}>
