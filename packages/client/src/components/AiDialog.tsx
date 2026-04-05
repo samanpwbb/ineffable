@@ -1,5 +1,5 @@
-import { Dialog } from "@base-ui/react/dialog";
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { AppDialog } from "./AppDialog.js";
 
 export type AiAction = "repair" | "remix" | "predict";
 
@@ -23,52 +23,38 @@ export function AiDialog({ action, onSubmit, onCancel }: AiDialogProps) {
   }, [action]);
 
   const open = action !== null;
+  const title = action ? action.charAt(0).toUpperCase() + action.slice(1) : "";
 
   return (
-    <Dialog.Root
+    <AppDialog
       open={open}
-      onOpenChange={(isOpen) => {
-        if (!isOpen) onCancel();
-      }}
-      modal
+      onClose={onCancel}
+      title={title}
+      description="Optional: add instructions for the AI."
+      actions={
+        <>
+          <button className="btn" onClick={onCancel}>
+            Cancel
+          </button>
+          <button
+            className="btn ai-dialog-submit"
+            onClick={() => {
+              if (action) onSubmit(action, message.trim());
+            }}
+          >
+            Submit
+          </button>
+        </>
+      }
     >
-      <Dialog.Portal>
-        <Dialog.Backdrop className="ai-dialog-backdrop" />
-        <Dialog.Popup className="ai-dialog-popup">
-          <Dialog.Title className="ai-dialog-title">
-            {action ? action.charAt(0).toUpperCase() + action.slice(1) : ""}
-          </Dialog.Title>
-          <Dialog.Description className="ai-dialog-description">
-            Optional: add instructions for the AI.
-          </Dialog.Description>
-          <textarea
-            className="ai-dialog-textarea"
-            placeholder={action ? placeholders[action] : ""}
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            rows={3}
-            autoFocus
-          />
-          <div className="ai-dialog-actions">
-            <button
-              className="btn"
-              onClick={onCancel}
-            >
-              Cancel
-            </button>
-            <button
-              className="btn ai-dialog-submit"
-              onClick={() => {
-                if (action) {
-                  onSubmit(action, message.trim());
-                }
-              }}
-            >
-              Submit
-            </button>
-          </div>
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
+      <textarea
+        className="ai-dialog-textarea"
+        placeholder={action ? placeholders[action] : ""}
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        rows={3}
+        autoFocus
+      />
+    </AppDialog>
   );
 }
