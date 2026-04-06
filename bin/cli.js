@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import fs from "node:fs";
 import path from "node:path";
 import { startServer } from "../dist/server/index.js";
 
@@ -11,17 +12,18 @@ if (args.includes("--help") || args.includes("-h")) {
 Open the Ineffable diagram editor for .txt files in a directory.
 
 Arguments:
-  directory    Target directory to scan for .txt files (default: cwd)
+  directory    Target directory to scan for .txt files (default: ./ineffable-diagrams)
   --port       Server port (default: 3001, or PORT env var)
 
 Examples:
-  ineffable                     # Edit diagrams in current directory
+  ineffable                     # Edit diagrams in ./ineffable-diagrams
   ineffable ./diagrams          # Edit diagrams in ./diagrams
   ineffable --port 8080         # Use custom port`);
   process.exit(0);
 }
 
-let targetDir = process.cwd();
+const DEFAULT_DIR = "ineffable-diagrams";
+let targetDir = path.join(process.cwd(), DEFAULT_DIR);
 let port;
 
 for (let i = 0; i < args.length; i++) {
@@ -33,4 +35,5 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
+fs.mkdirSync(targetDir, { recursive: true });
 startServer({ targetDir, port });

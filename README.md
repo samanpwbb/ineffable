@@ -1,8 +1,16 @@
 # Ineffable
 
+![screenshot of Ineffable UI](./_assets/screenshot.png)
+
 An ASCII diagram editor for designing UI with Claude. Because sometimes words aren't good enough.
 
 I've always preferred designing directly in the browser. I want to work the same way with Claude Code - no mock-ups or wireframes necessary - but Claude makes UI design choices I disagree with constantly, and using _English_ to explain how to arrange things is exhausting. I discovered that sketching ASCII diagrams was a fast and effective way to communicate layout and structure. But the Claude Code prompt field is a terrible ASCII editor, so I built Ineffable.
+
+## Current status
+
+Ineffable is very early in development but definitely already useful (I use it every day). I am adding features as I find I need them.
+
+Right now the best way to use ineffable is to install it in your project via NPM and run it from the command line, then open up the port it's running in the browser. VS Code plugin coming soon.
 
 ## Install
 
@@ -12,13 +20,13 @@ npm install -D ineffable
 
 ## Quick start
 
-Run `ineffable` in any project directory to open the editor for all `.txt` files:
+Run `ineffable` in any project directory to open the editor:
 
 ```bash
 npx ineffable
 ```
 
-Point it at a specific folder:
+By default, diagrams are stored in an `ineffable-diagrams/` directory (created automatically if it doesn't exist). You can point it at a different folder:
 
 ```bash
 npx ineffable ./diagrams
@@ -31,7 +39,7 @@ This starts a local server and opens a browser-based canvas editor. Any `.txt` f
 ```
 ineffable [directory] [--port <port>]
 
-  directory    Target directory to scan for .txt files (default: current directory)
+  directory    Target directory to scan for .txt files (default: ./ineffable-diagrams)
   --port       Server port (default: 3001, or PORT env var)
 ```
 
